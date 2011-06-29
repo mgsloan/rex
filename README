@@ -1,0 +1,17 @@
+http://hackage.haskell.org/package/typed-regex
+
+Provides a quasi-quoter for regular expressions which
+yields a tuple, of appropriate arity and types,
+representing the results of the captures.  Allows the user 
+to specify parsers for captures as inline Haskell.  Can 
+also be used to provide typeful pattern matching in
+function definitions and case patterns.
+
+To build / install:
+
+chmod ugo+x Setup.hs
+./Setup.hs configure --user
+./Setup.hs build
+./Setup.hs install
+
+See the haddock or Text/Regex/PCRE/QQT.hs for documentation.

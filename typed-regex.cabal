@@ -1,0 +1,32 @@
+Name:                typed-regex
+Version:             0.1
+Synopsis:            A quasi-quoter for typeful results of regex captures.
+Description:         Provides a quasi-quoter for regular expressions which
+                     yields a tuple, of appropriate arity and types,
+                     representing the results of the captures.  Allows the user 
+                     to specify parsers for captures as inline Haskell.  Can 
+                     also be used to provide typeful pattern matching in
+                     function definitions and case patterns.
+License:             BSD3
+License-file:        LICENSE
+Author:              Michael Sloan
+Maintainer:          Michael Sloan <mgsloan at gmail>
+Homepage:            http://github.com/mgsloan/typed-regex
+Copyright:           Michael Sloan 2011
+Category:            Control
+Build-type:          Simple
+Stability:           experimental
+-- Extra-source-files:  
+Cabal-version:       >=1.6
+Bug-Reports:         http://github.com/mgsloan/typed-regex/issues
+Source-Repository head
+  Type: git
+  Location: git://github.com/mgsloan/typed-regex
+
+Library
+  Extensions:        TemplateHaskell, QuasiQuotes, TupleSections,
+                     ParallelListComp, ViewPatterns
+  Exposed-modules:   Text.Regex.PCRE.QQT
+  Build-depends:     base >= 3.0 && < 6, template-haskell >= 2.5.0.0,
+                     haskell-src-meta, MissingH, bytestring, pcre-light
+  Ghc-options:       -Wall
