@@ -33,29 +33,22 @@ module Text.Regex.PCRE.QQT (reg, makeExpr, maybeRead, pack, unpack) where
 import Text.Regex.PCRE.Light (Regex,PCREOption,PCREExecOption)
 import qualified Text.Regex.PCRE.Light as PCRE
 
---import Control.Monad (liftM)
+import Control.Monad (liftM, join)
 
 import qualified Data.ByteString as B
 import Data.ByteString.Internal (c2w,w2c)
 import Data.Either.Utils (forceEitherMsg)
 import Data.List (groupBy, inits, sortBy, isPrefixOf)
---import Data.List.Split (splitOn)
+import Data.List.Split (split, onSublist)
 import Data.Maybe (catMaybes, listToMaybe)
 import Data.Ord (comparing)
 import Data.Char (isSpace)
 
--- import Debug.Trace
+import Debug.Trace
 
 import Language.Haskell.TH
 import Language.Haskell.TH.Quote
 import Language.Haskell.Meta.Parse
-
-{-
-import Language.Haskell.Exts.Fixity
-import Language.Haskell.Exts.Extension
-import Language.Haskell.Exts.Parser hiding (parseExp, parseType, parsePat)
-import Language.Haskell.Meta.Syntax.Translate
--}
 
 type ParseChunk = Either String (Int, String)
 type ParseChunks = (Int, String, [(Int, String)])
@@ -66,19 +59,22 @@ type ParseChunks = (Int, String, [(Int, String)])
   be referenced in order to dispatch 
 -}
 
+{- TODO: target Text.Regex.Base -}
+
+-- | The regular expression quasiquoter.
 reg :: QuasiQuoter
 reg = QuasiQuoter
         (checkRegex makeExpr . parseIt)
---        (checkRegex makePat . parseIt)
-        undefined
+        (checkRegex makePat . parseIt)
         undefined undefined
 
--- Gives an error at compile time if the regex string is invalid
+-- Gives an error at compile time if the regex string is invalid.
 checkRegex :: (ParseChunks -> a) -> ParseChunks -> a
 checkRegex f x@(_, pat, _) = 
   forceEitherMsg ("Error compiling regular expression [$reg|"  ++ pat ++ "|]")
     (PCRE.compileM (pack pat) pcreOpts) `seq` f x
 
+--
 regex :: String -> Regex
 regex = flip PCRE.compile pcreOpts . pack
 
@@ -94,31 +90,29 @@ makeExpr (cnt, pat, exs) = buildExpr cnt pat
     . map (processExpr . snd . head)
     . groupSortBy (comparing fst)
     $ exs ++ ((0, "") : [(i, "maybeRead") | i <- [1..cnt]])
-  where processExpr "" = Nothing
-        processExpr xs = Just . forceEitherMsg ("Error while parsing capture mapper " ++ xs)
-                       $ parseExp xs
+  
+processExpr "" = Nothing
+processExpr xs = Just . forceEitherMsg ("Error while parsing capture mapper " ++ xs)
+               $ parseExp xs
 
-{-
+processPat xs = Just . forceEitherMsg ("Error while parsing capture pattern " ++ xs)
+              $ parsePat xs
+
 makePat :: ParseChunks -> PatQ
 makePat (cnt, pat, exs) = do
   viewExp <- buildExpr cnt pat $ map (liftM fst) ys
   return . ViewP viewExp . TupP . map snd $ catMaybes ys
  where
-  ys = map (liftM post . processPat . snd . head)
+  ys = map (join . liftM floatBoth . processView . snd . head)
      . groupSortBy (comparing fst)
      $ exs ++ [(i, "") | i <- [0..cnt]]
 
-  post (ViewP e x) = (e, x)
-  post x = (VarE (mkName "maybeRead"), x)
-
-  processPat "" = Nothing
-  processPat xs | "->" `isPrefixOf` trimFront xs
-                = forceParse $ "(maybeRead " ++ xs ++ ")"
-  processPat xs = forceParse xs
-
-  forceParse xs = Just . forceEitherMsg ("Error while parsing capture pattern " ++ xs)
-                $ parsePat xs
--}
+  processView "" = Nothing
+  processView xs = case splitFromBack 2 ((split . onSublist) "->" xs) of
+    (_, [""]) -> Nothing
+    (_, [r])                              -> Just (processExpr "maybeRead", processPat r)
+    (concat -> l, [_, r]) | all isSpace l -> Just (processExpr "maybeRead", processPat r)
+    (concat -> l, [_, r])                 -> Just (processExpr l, processPat r)
 
 buildExpr :: Int -> String -> [Maybe Exp] -> ExpQ
 buildExpr cnt pat hexps = do
@@ -216,17 +210,14 @@ pcreExecOpts = []
   -- , exec_newline_any, PCRE.exec_notempty
   -- , PCRE.exec_notbol, PCRE.exec_noteol ]
 
-trimFront :: String -> String
-trimFront = dropWhile isSpace
-
 single :: a -> [a]
 single x = [x]
 
 groupSortBy :: (a -> a -> Ordering) -> [a] -> [[a]]
 groupSortBy f = groupBy (\x -> (==EQ) . f x) . sortBy f
 
--- debug :: (Show a) => a -> a
--- debug x = trace (show x) x
+debug :: (Show a) => a -> a
+debug x = trace (show x) x
 
 mapFst :: (a -> c) -> (a, b) -> (c, b)
 mapFst f (x, y) = (f x, y)
@@ -239,6 +230,17 @@ floatFst (x, y) = fmap (,y) x
 
 floatSnd :: (Functor f) => (a, f b) -> f (a, b)
 floatSnd (x, y) = fmap (x,) y
+
+floatBoth :: (Monad m) => (m a, m b) -> m (a, b)
+floatBoth (x, y) = do
+  x' <- x
+  y' <- y
+  return (x', y')
+
+splitFromBack i xs = (reverse b, reverse a)
+  where (a, b) = splitAt i $ reverse xs
+
+dropAllBut i = reverse . take i . reverse
 
 mapLeft :: (a -> a') -> Either a b -> Either a' b
 mapLeft f = either (Left . f) Right
@@ -287,7 +289,8 @@ parsePat = mapRight toPat . parseResultToEither . parsePatWithMode myDefaultPars
 -}
 
 {-
---TODO: use something like this to cache compilde regex.
+--TODO: use something like this to cache compiled regex.
+-- Even better would be to do the compilation step compile time :)
 -- http://stackoverflow.com/questions/141650/how-do-you-make-a-generic-memoize-function-in-haskell
 memoize :: Ord a => (a -> b) -> (a -> b)
 memoize f = unsafePerformIO $ do 
