@@ -38,7 +38,7 @@ import Control.Monad (liftM, join)
 import qualified Data.ByteString as B
 import Data.ByteString.Internal (c2w,w2c)
 import Data.Either.Utils (forceEitherMsg)
-import Data.List (groupBy, inits, sortBy, isPrefixOf)
+import Data.List (groupBy, inits, sortBy)
 import Data.List.Split (split, onSublist)
 import Data.Maybe (catMaybes, listToMaybe)
 import Data.Ord (comparing)
@@ -74,30 +74,26 @@ checkRegex f x@(_, pat, _) =
   forceEitherMsg ("Error compiling regular expression [$reg|"  ++ pat ++ "|]")
     (PCRE.compileM (pack pat) pcreOpts) `seq` f x
 
---
-regex :: String -> Regex
-regex = flip PCRE.compile pcreOpts . pack
-
-maybeRead :: (Read a) => String -> Maybe a
-maybeRead = fmap fst . listToMaybe . reads
 
 -- Template Haskell Code Generation
 -------------------------------------------------------------------------------
 
--- If no processing function, default to "maybeRead".
+-- Creates the template haskell Exp which corresponds to the parsed interpolated
+-- regex.  This particular code mainly just handles making "maybeRead" the
+-- default for captures which lack a parser definition, and defaulting to making
+-- the parser that doesn't exist
 makeExpr :: ParseChunks -> ExpQ
 makeExpr (cnt, pat, exs) = buildExpr cnt pat
     . map (processExpr . snd . head)
     . groupSortBy (comparing fst)
     $ exs ++ ((0, "") : [(i, "maybeRead") | i <- [1..cnt]])
   
-processExpr "" = Nothing
-processExpr xs = Just . forceEitherMsg ("Error while parsing capture mapper " ++ xs)
-               $ parseExp xs
-
-processPat xs = Just . forceEitherMsg ("Error while parsing capture pattern " ++ xs)
-              $ parsePat xs
-
+-- Creates the template haskell Pat which corresponds to the parsed interpolated
+-- regex. As well as handling the aforementioned defaulting considerations, this
+-- turns per-capture view patterns into a single tuple-resulting view pattern.
+-- 
+-- E.g. [reg| ... ({e1 -> v1} ...) ... ({e2 -> v2} ...) ... |] becomes
+--      [reg| ... ({e1} ...) ... ({e2} ...) ... |] -> (v1, v2)
 makePat :: ParseChunks -> PatQ
 makePat (cnt, pat, exs) = do
   viewExp <- buildExpr cnt pat $ map (liftM fst) ys
@@ -105,15 +101,17 @@ makePat (cnt, pat, exs) = do
  where
   ys = map (join . liftM floatBoth . processView . snd . head)
      . groupSortBy (comparing fst)
-     $ exs ++ [(i, "") | i <- [0..cnt]]
+     $ (0, "") : exs ++ [(i, "") | i <- [1..cnt]]
 
   processView "" = Nothing
   processView xs = case splitFromBack 2 ((split . onSublist) "->" xs) of
-    (_, [""]) -> Nothing
-    (_, [r])                              -> Just (processExpr "maybeRead", processPat r)
-    (concat -> l, [_, r]) | all isSpace l -> Just (processExpr "maybeRead", processPat r)
-    (concat -> l, [_, r])                 -> Just (processExpr l, processPat r)
+    (_, [r]) -> onSpace Nothing (Just . (processExpr "maybeRead",) . processPat) r
+    (concat -> l, [_, r]) -> Just (processExpr (onSpace "maybeRead" id $ l), processPat r)
+    (_, _) -> Nothing
 
+-- Here's where the main meat of the template haskell is generated.  Given the
+-- number of captures, the pattern string, and a list of capture expressions,
+-- yields the template Haskell Exp which parses a string into a tuple.
 buildExpr :: Int -> String -> [Maybe Exp] -> ExpQ
 buildExpr cnt pat hexps = do
   vx <- newName "x"
@@ -130,9 +128,23 @@ buildExpr cnt pat hexps = do
   return . LamE [VarP vx] . CaseE caseExp . zipWith mkMatch [cnt+1,cnt..]
          $ inits [mkName $ "r" ++ show i | i <- [0..cnt]]
 
+-- Parse a Haskell expression into a template Haskell Exp, yielding Nothing for
+-- strings which just consist of whitespace.
+processExpr :: [Char] -> Maybe Exp
+processExpr xs = onSpace Nothing
+  (Just . forceEitherMsg ("Error while parsing capture mapper " ++ xs) .  parseExp) xs
+
+-- Parse a Haskell pattern match into a template Haskell Pat, yielding Nothing for
+-- strings which just consist of whitespace.
+processPat :: [Char] -> Maybe Pat
+processPat xs = onSpace Nothing
+  (Just . forceEitherMsg ("Error while parsing capture mapper " ++ xs) .  parsePat) xs
+
 -- Parsing
 -------------------------------------------------------------------------------
 
+-- Postprocesses the results of the chunk-wise parse output, into the pattern to
+-- be pased to the regex engine, and the interpolated 
 parseIt :: String -> ParseChunks
 parseIt xs = (cnt, concat [x | Left x <- results]
              , [(i, x) | Right (i, x) <- results])
@@ -187,11 +199,24 @@ parseHaskell inp s ix = case inp of
 -- Utils
 -------------------------------------------------------------------------------
 
+-- The following 2 functions are referenced in the generated TH code, as well as
+-- this module.
+
 pack :: String -> B.ByteString
 pack = B.pack . fmap c2w
 
 unpack :: B.ByteString -> String
 unpack = fmap w2c . B.unpack
+
+-- Compiles a regular expression with the default options.
+regex :: String -> Regex
+regex = flip PCRE.compile pcreOpts . pack
+
+-- | The default read definition - yields "Just x" when there is a valid parse,
+--   and Nothing otherwise.
+maybeRead :: (Read a) => String -> Maybe a
+maybeRead = fmap fst . listToMaybe . reads
+
 
 -- TODO: allow for a bundle of parameters to be passed in at the beginning
 -- of the quasiquote. Would also be a juncture for informing arity /
@@ -237,56 +262,22 @@ floatBoth (x, y) = do
   y' <- y
   return (x', y')
 
+splitFromBack :: Int -> [a] -> ([a], [a])
 splitFromBack i xs = (reverse b, reverse a)
   where (a, b) = splitAt i $ reverse xs
 
+dropAllBut :: Int -> [a] -> [a]
 dropAllBut i = reverse . take i . reverse
+
+onSpace :: a -> (String -> a) -> String -> a
+onSpace x f s | all isSpace s = x
+              | otherwise = f s
 
 mapLeft :: (a -> a') -> Either a b -> Either a' b
 mapLeft f = either (Left . f) Right
 
 mapRight :: (b -> b') -> Either a b -> Either a b'
 mapRight f = either Left (Right . f)
-
-{- NVM - haskell-src does not support view patterns.
-
--- Modified version of Language.Haskell.Meta.Parse
--------------------------------------------------------------------------------
-
--- Only change is inluding "ViewPatterns" in extensions.
--- Kinda terrible that I have to do this - it would be nice if it was
--- possible to know / reflect on the compilation context in order to
--- retrieve arity and extensions information.
-myDefaultExtensions :: [Extension]
-myDefaultExtensions = [PostfixOperators
-                      ,QuasiQuotes
-                      ,UnicodeSyntax
-                      ,PatternSignatures
-                      ,MagicHash
-                      ,ForeignFunctionInterface
-                      ,TemplateHaskell
-                      ,RankNTypes
-                      ,MultiParamTypeClasses
-                      ,RecursiveDo
-                      ,ViewPatterns]
-
-myDefaultParseMode :: ParseMode
-myDefaultParseMode = ParseMode
-  {parseFilename = []
-  ,extensions = myDefaultExtensions
-  ,ignoreLinePragmas = False
-  ,ignoreLanguagePragmas = False
-  ,fixities = Just baseFixities }
-
--- Modified this to remove src location info
-parseResultToEither :: ParseResult a -> Either String a
-parseResultToEither (ParseOk a) = Right a
-parseResultToEither (ParseFailed loc e) = Left e
-
-parseExp = mapRight toExp . parseResultToEither . parseExpWithMode myDefaultParseMode
-parsePat = mapRight toPat . parseResultToEither . parsePatWithMode myDefaultParseMode
-
--}
 
 {-
 --TODO: use something like this to cache compiled regex.
