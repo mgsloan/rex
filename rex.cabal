@@ -1,4 +1,4 @@
-Name:                typed-regex
+Name:                rex
 Version:             0.1
 Synopsis:            A quasi-quoter for typeful results of regex captures.
 Description:         Provides a quasi-quoter for regular expressions which
@@ -22,7 +22,7 @@ Cabal-version:       >=1.6
 Bug-Reports:         http://github.com/mgsloan/typed-regex/issues
 Source-Repository head
   Type: git
-  Location: git://github.com/mgsloan/typed-regex
+  Location: git://github.com/mgsloan/rex
 
 Library
   Extensions:        TemplateHaskell, QuasiQuotes, TupleSections,
