@@ -11,7 +11,7 @@ License:             BSD3
 License-file:        LICENSE
 Author:              Michael Sloan
 Maintainer:          Michael Sloan <mgsloan at gmail>
-Homepage:            http://github.com/mgsloan/typed-regex
+Homepage:            http://github.com/mgsloan/rex
 Copyright:           Michael Sloan 2011
 Category:            Control
 Build-type:          Simple
@@ -19,7 +19,7 @@ Stability:           experimental
 Extra-source-files:  Test.hs
 Data-files:          README
 Cabal-version:       >=1.6
-Bug-Reports:         http://github.com/mgsloan/typed-regex/issues
+Bug-Reports:         http://github.com/mgsloan/rex/issues
 Source-Repository head
   Type: git
   Location: git://github.com/mgsloan/rex
@@ -27,7 +27,7 @@ Source-Repository head
 Library
   Extensions:        TemplateHaskell, QuasiQuotes, TupleSections,
                      ParallelListComp, ViewPatterns
-  Exposed-modules:   Text.Regex.PCRE.QQT
+  Exposed-modules:   Text.Regex.PCRE.Rex
   Build-depends:     base >= 3.0 && < 6, template-haskell >= 2.5.0.0,
                      haskell-src-meta, MissingH, bytestring, pcre-light, split
   Ghc-options:       -Wall
