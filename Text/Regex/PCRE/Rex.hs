@@ -88,6 +88,26 @@
 -- expression on the left.  This allows for lambdas to be present in the
 -- expression, but prevents nesting view patterns.
 --
+-- There are a few other inelegances:
+--
+-- 1) PCRE captures, unlike .NET regular expressions, yield the last capture
+-- made by a particular pattern.  So, for example, (...)*, will only yield one
+-- match for '...'.  Ideally these would be detected and yield an implicit [a].
+--
+-- 2) Patterns with disjunction between captures ((?{f}a) | (?{g}b)) will
+-- provide the empty string to one of f / g.  In the case of pattern
+-- expressions, it would be convenient to be able to map multiple captures into
+-- a single variable / pattern, preferring the first non-empty option.  The
+-- general logic for this is a bit complicated, and postponed for a later
+-- release.
+--
+-- Since pcre-light is a wrapper over a C API, the most efficient interface is
+-- ByteStrings, as it does not natively speak Haskell lists.  The [rex| ... ]
+-- quasiquoter implicitely packs the input into a bystestring, and unpacks the
+-- results to strings before providing them to your mappers.  Use [brex| ... ]
+-- to bypass this, and process raw ByteStrings.  In order to preserve the
+-- same default behavior, "read . unpack" is the default mapper in this case.
+--
 -- Inspired by / copy-modified from Matt Morrow's regexqq package:
 -- http://hackage.haskell.org/packages/archive/regexqq/latest/doc/html/src/Text-Regex-PCRE-QQ.html
 -- And code from Erik Charlebois's interpolatedstring-qq package:
@@ -95,20 +115,20 @@
 --
 -----------------------------------------------------------------------------
 
-module Text.Regex.PCRE.Rex (rex, makeExpr, maybeRead, pack, unpack) where
+module Text.Regex.PCRE.Rex (rex, brex, maybeRead, padRight) where
 
 import Text.Regex.PCRE.Light (Regex,PCREOption,PCREExecOption)
 import qualified Text.Regex.PCRE.Light as PCRE
+import Text.Regex.PCRE.Precompile
 
-import Control.Arrow (second)
+import Control.Arrow (first, second)
 import Control.Monad (liftM)
 
-import qualified Data.ByteString as B
-import Data.ByteString.Internal (c2w,w2c)
+import qualified Data.ByteString.Char8 as B
 import Data.Either.Utils (forceEitherMsg)
-import Data.List (groupBy, inits, sortBy)
+import Data.List (groupBy, sortBy)
 import Data.List.Split (split, onSublist)
-import Data.Maybe (catMaybes, listToMaybe)
+import Data.Maybe (catMaybes, listToMaybe, fromJust, isJust)
 import Data.Ord (comparing)
 import Data.Char (isSpace)
 
@@ -117,6 +137,8 @@ import Debug.Trace
 import Language.Haskell.TH
 import Language.Haskell.TH.Quote
 import Language.Haskell.Meta.Parse
+
+import System.IO.Unsafe (unsafePerformIO)
 
 type ParseChunk = Either String (Int, String)
 type ParseChunks = (Int, String, [(Int, String)])
@@ -130,17 +152,29 @@ type ParseChunks = (Int, String, [(Int, String)])
 {- TODO: target Text.Regex.Base -}
 
 -- | The regular expression quasiquoter.
-rex :: QuasiQuoter
+rex, brex :: QuasiQuoter
 rex = QuasiQuoter
-        (checkRegex makeExpr . parseIt)
-        (checkRegex makePat . parseIt)
+        (checkRegex (makeExp False) . parseIt)
+        (checkRegex (makePat False) . parseIt)
         undefined undefined
+
+brex = QuasiQuoter
+        (checkRegex (makeExp True) . parseIt)
+        (checkRegex (makePat True) . parseIt)
+        undefined undefined
+
+-- Default parsers, one for the bytestring case and one for the string.
+defaultExp :: Bool -> String
+defaultExp True = "read . unpack"
+defaultExp False = "read"
 
 -- Gives an error at compile time if the regex string is invalid.
 checkRegex :: (ParseChunks -> a) -> ParseChunks -> a
-checkRegex f x@(_, pat, _) = 
+checkRegex f x@(_, pat, _) = precompile (B.pack pat) pcreOpts `seq` f x
+{-
   forceEitherMsg ("Error compiling regular expression [reg|"  ++ pat ++ "|]\n")
-    (PCRE.compileM (pack pat) pcreOpts) `seq` f x
+    (PCRE.compileM (B.pack pat) pcreOpts) `seq` f x
+    -}
 
 
 -- Template Haskell Code Generation
@@ -150,9 +184,9 @@ checkRegex f x@(_, pat, _) =
 -- regex.  This particular code mainly just handles making "maybeRead" the
 -- default for captures which lack a parser definition, and defaulting to making
 -- the parser that doesn't exist
-makeExpr :: ParseChunks -> ExpQ
-makeExpr (cnt, pat, exs) = buildExpr cnt pat
-    . map ((>>= processExpr) . snd . head)
+makeExp :: Bool -> ParseChunks -> ExpQ
+makeExp bs (cnt, pat, exs) = buildExp bs cnt pat
+    . map (liftM (processExp bs) . snd . head)
     . groupSortBy (comparing fst)
     $ map (second Just) exs ++ [(i, Nothing) | i <- [0..cnt]]
   
@@ -162,45 +196,57 @@ makeExpr (cnt, pat, exs) = buildExpr cnt pat
 -- 
 -- E.g. [reg| ... (?{e1 -> v1} ...) ... (?{e2 -> v2} ...) ... |] becomes
 --      [reg| ... (?{e1} ...) ... (?{e2} ...) ... |] -> (v1, v2)
-makePat :: ParseChunks -> PatQ
-makePat (cnt, pat, exs) = do
-  viewExp <- buildExpr cnt pat $ map (liftM fst) ys
-  return . ViewP viewExp . TupP . map snd $ catMaybes ys
+makePat :: Bool -> ParseChunks -> PatQ
+makePat bs (cnt, pat, exs) = do
+  viewExp <- buildExp bs cnt pat $ map (liftM fst) ys
+  return . ViewP viewExp . ConP (mkName "Just") . single
+         . TupP . map snd $ catMaybes ys
  where
-  ys = map ((>>= floatBoth) . processView . snd . head)
+  ys = map (floatSnd . processView . snd . head)
      . groupSortBy (comparing fst)
      $ exs ++ [(i, "") | i <- [0..cnt]]
 
-  processView "" = Nothing
   processView xs = case splitFromBack 2 ((split . onSublist) "->" xs) of
-    (_, [r]) -> onSpace Nothing (Just . (processExpr "maybeRead",) . processPat) r
-    (concat -> l, [_, r]) -> Just (processExpr (onSpace "maybeRead" id $ l), processPat r)
-    (_, _) -> Nothing
+    (_, [r]) -> onSpace (error $ "blank pattern in: " ++ r)
+                        ((processExp bs "",) . processPat) r
+    -- View pattern
+    (concat -> l, [_, r]) -> (processExp bs l, processPat r)
+    -- Included so that Haskell doesn't warn about non-exhaustive patterns
+    -- (even though the above are exhaustive in this context)
+    _ -> undefined
 
 -- Here's where the main meat of the template haskell is generated.  Given the
 -- number of captures, the pattern string, and a list of capture expressions,
 -- yields the template Haskell Exp which parses a string into a tuple.
-buildExpr :: Int -> String -> [Maybe Exp] -> ExpQ
-buildExpr cnt pat hexps = do
-  vx <- newName "x"
-  emptyE <- [|""|]
-  caseExp <-  [| fmap (map unpack)
-               $ PCRE.match (regex pat) (pack $(return $ VarE vx)) pcreExecOpts |]
-  let mkMatch rcnt xs = Match
-        (if null xs then ConP (mkName "Nothing") []
-                    else ConP (mkName "Just") . single . ListP . (WildP:) $ map VarP xs)
-        (NormalB . TupE . map (uncurry AppE) . catMaybes
-                 . zipWith (curry floatFst) hexps 
-                 $ (map VarE xs) ++ replicate rcnt emptyE)
-        []
-  return . LamE [VarP vx] . CaseE caseExp . zipWith mkMatch [cnt+1,cnt..]
-         $ inits [mkName $ "r" ++ show i | i <- [0..cnt]]
+buildExp :: Bool -> Int -> String -> [Maybe Exp] -> ExpQ
+buildExp bs max pat xs = do
+  if bs
+  then [| liftM ( $(return maps)
+                . padRight B.empty cnt)
+        . (flip $ PCRE.match $ regex pat) pcreExecOpts |]
+  else [| liftM ( $(return maps)
+                . padRight "" cnt
+                . map B.unpack)
+        . flip (PCRE.match $ regex pat) pcreExecOpts . B.pack |]
+  where cnt = max + 2
+        vs = [mkName $ "v" ++ show i | i <- [0..max]]
+{-        uniq = newName "bs" >>= return . LitE . StringL . show
+        --TODO: make sure this takes advantage of bytestring fusion stuff
+        pre = [| B.pack $(runIO (precompile (B.pack pat) pcreOpts) >>= 
+                        return . LitE . StringL . B.unpack . fromJust) |]
+ -}
+        maps = LamE [ListP . (WildP:) $ map VarP vs]
+                    (TupE . map (uncurry AppE)
+                    -- filter out all "Nothing" exprs
+                    . map (first fromJust) . filter (isJust . fst)
+                    -- [(Expr, Variable applied to)]
+                    . zip xs $ map VarE vs)
 
--- Parse a Haskell expression into a template Haskell Exp, yielding Nothing for
--- strings which just consist of whitespace.
-processExpr :: String -> Maybe Exp
-processExpr xs = Just . forceEitherMsg ("Error while parsing capture mapper " ++ xs)
-               . parseExp . onSpace "maybeRead" id $ xs
+-- Parse a Haskell expression into a template Haskell Exp, yielding the
+-- default for strings which just consist of whitespace.
+processExp :: Bool -> String -> Exp
+processExp bs xs = forceEitherMsg ("Error while parsing capture mapper " ++ xs)
+               . parseExp . onSpace (defaultExp bs) id $ xs
 
 -- Parse a Haskell pattern match into a template Haskell Pat, yielding Nothing for
 -- strings which just consist of whitespace.
@@ -267,15 +313,17 @@ parseHaskell inp s ix = case inp of
 -- The following 2 functions are referenced in the generated TH code, as well as
 -- this module.
 
+{-
 pack :: String -> B.ByteString
 pack = B.pack . fmap c2w
 
 unpack :: B.ByteString -> String
 unpack = fmap w2c . B.unpack
+-}
 
 -- Compiles a regular expression with the default options.
 regex :: String -> Regex
-regex = flip PCRE.compile pcreOpts . pack
+regex = flip PCRE.compile pcreOpts . B.pack
 
 -- | The default read definition - yields "Just x" when there is a valid parse,
 --   and Nothing otherwise.
@@ -338,25 +386,15 @@ onSpace :: a -> (String -> a) -> String -> a
 onSpace x f s | all isSpace s = x
               | otherwise = f s
 
+-- Not quite the ordinary padding function - also trims. TODO: make sure trim
+-- behavior neverused by the regex parser. (could be a bug)
+padRight :: a -> Int -> [a] -> [a]
+padRight _ 0 xs = xs
+padRight v i [] = replicate i v
+padRight v i (x:xs) = x : padRight v (i-1) xs
+
 mapLeft :: (a -> a') -> Either a b -> Either a' b
 mapLeft f = either (Left . f) Right
 
 mapRight :: (b -> b') -> Either a b -> Either a b'
 mapRight f = either Left (Right . f)
-
-{-
---TODO: use something like this to cache compiled regex.
--- Even better would be to do the compilation step compile time :)
--- http://stackoverflow.com/questions/141650/how-do-you-make-a-generic-memoize-function-in-haskell
-memoize :: Ord a => (a -> b) -> (a -> b)
-memoize f = unsafePerformIO $ do 
-    r <- newIORef Map.empty
-    return $ \ x -> unsafePerformIO $ do 
-        m <- readIORef r
-        case Map.lookup x m of
-            Just y  -> return y
-            Nothing -> do 
-                    let y = f x
-                    writeIORef r (Map.insert x y m)
-                    return y
--}

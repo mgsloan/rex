@@ -27,7 +27,8 @@ Source-Repository head
 Library
   Extensions:        TemplateHaskell, QuasiQuotes, TupleSections,
                      ParallelListComp, ViewPatterns
-  Exposed-modules:   Text.Regex.PCRE.Rex
+  Exposed-modules:   Text.Regex.PCRE.Rex,
+                     Text.Regex.PCRE.Precompile
   Build-depends:     base >= 3.0 && < 6, template-haskell >= 2.5.0.0,
                      haskell-src-meta, MissingH, bytestring, pcre-light, split
   Ghc-options:       -Wall
