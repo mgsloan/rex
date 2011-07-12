@@ -18,53 +18,53 @@
 -- in the regular expression.
 --
 -- 3) By default utilizes type inference to determine how to parse capture
--- patterns - uses "maybeRead" function, which yields a "(Read a) => Just a"
--- value on successful parse.
+-- patterns - uses the "read" function's return-type polymorphism
 --
 -- 4) Allows for the inline interpolation of a mapping function String -> a.
+--
+-- 5) Precompiles the regular expression at compile time, by calling into the
+-- PCRE library and storing a ByteString literal representation of its state.
 --
 -- Here's a silly example which parses peano numbers of the form "Z", "S Z",
 -- "S S Z", etc.  The \s+ means that it is not sensitive to the quantity or type
 -- of seperating whitespace. (these examples can also be found in Test.hs)
 --
--- > peano :: String -> Int
+-- > peano :: String -> Maybe Int
 -- > peano = [rex|^(?{ length . filter (=='S') } \s* (?:S\s+)*Z)\s*$|]
 --
 -- > *Main> peano "Z"
--- > 0
+-- > Just 0
 -- > *Main> peano "S Z"
--- > 1
+-- > Just 1
 -- > *Main> peano "S   S Z"
--- > 2
+-- > Just 2
 -- > *Main> peano "S S S Z"
--- > 3
+-- > Just 3
 -- > *Main> peano "invalid"
--- > 0
+-- > Nothing
 --
 -- The token \"(?{\" introduces a capture group which has a mapping applied to the
--- result - in this case \"length . filter (=='S')\".  In the case that the match
--- fails, \"\" is provided as input.  \"}\" ends the Haskell mapping expression.
---
--- If an expression is omitted, \"(?{} ... )\", then there is an implicit usage of
--- the \"maybeRead :: (Read a) => String -> Maybe a\" function provided by this
--- module.  If the ?{ ... } is omitted, then the capture group is not taken as
--- part of the results of the match.
+-- result - in this case \"length . filter (=='S')\". If an expression is omitted, 
+-- e.g. \"(?{} ... )\", then there is an implicit usage of the read function.
 -- 
--- > vect2d :: String -> (Maybe Int, Maybe Int)
+-- If the ?{ ... } are omitted, then the capture group is not taken as part of
+-- the results of the match.
+-- 
+-- > vect2d :: String -> Maybe (Int, Int)
 -- > vect2d = [rex|^<\s* (?{}\d+) \s*,\s* (?{}\d+) \s*>$|]
 --
 -- The following example is derived from http://www.regular-expressions.info/dates.html
 --
 -- > parseDate :: String -> Maybe (Int, Int, Int)
--- > parseDate [rex|^(?{ Just y }(?:19|20)\d\d)[- /.]
--- >                 (?{ Just m }0[1-9]|1[012])[- /.]
--- >                 (?{ Just d }0[1-9]|[12][0-9]|3[01])$|]
+-- > parseDate [rex|^(?{ y }(?:19|20)\d\d)[- /.]
+-- >                 (?{ m }0[1-9]|1[012])[- /.]
+-- >                 (?{ d }0[1-9]|[12][0-9]|3[01])$|]
 -- >   |  (d > 30 && (m `elem` [4, 6, 9, 11]))
 -- >   || (m == 2 &&
--- >        (d ==29 && not (mod y 4 == 0 && (mod y 100 /= 0 || mod y 400 == 0)))
--- >     || (d > 29)) = Nothing
--- > 
+-- >        (d == 29 && not (mod y 4 == 0 && (mod y 100 /= 0 || mod y 400 == 0)))
+-- >      || (d > 29)) = Nothing
 -- >   | otherwise = Just (y, m, d)
+-- > parseDate _ = Nothing
 --
 -- The above example makes use of the regex quasi-quoter as a pattern matcher.
 -- The interpolated Haskell patterns are used to construct an implicit view
@@ -73,11 +73,7 @@
 -- > parseDate ([rex|^(?{}(?:19|20)\d\d)[- /.]
 -- >                  (?{}0[1-9]|1[012])[- /.]
 -- >                  (?{}0[1-9]|[12][0-9]|3[01])$|]
--- >           -> (Just y, Just m, Just d))
---
--- Since this is how the patterns desugar, if you wish for the pattern to fall
--- through to the next case on failed regex match, then at least one of the 
--- captures needs to fail on the empty string.
+-- >           -> Just (y, m, d))
 --
 -- In order to provide a capture-mapper along with a pattern, use view-patterns
 -- inside the interpolation brackets.
@@ -106,7 +102,7 @@
 -- quasiquoter implicitely packs the input into a bystestring, and unpacks the
 -- results to strings before providing them to your mappers.  Use [brex| ... ]
 -- to bypass this, and process raw ByteStrings.  In order to preserve the
--- same default behavior, "read . unpack" is the default mapper in this case.
+-- same default behavior, "read . unpack" is the default mapper for brex.
 --
 -- Inspired by / copy-modified from Matt Morrow's regexqq package:
 -- http://hackage.haskell.org/packages/archive/regexqq/latest/doc/html/src/Text-Regex-PCRE-QQ.html
@@ -223,18 +219,18 @@ buildExp bs max pat xs = do
   if bs
   then [| liftM ( $(return maps)
                 . padRight B.empty cnt)
-        . (flip $ PCRE.match $ regex pat) pcreExecOpts |]
+        . (flip $ PCRE.match $ memoizeRegex $(uniq) $(pre)) pcreExecOpts |]
   else [| liftM ( $(return maps)
                 . padRight "" cnt
                 . map B.unpack)
-        . flip (PCRE.match $ regex pat) pcreExecOpts . B.pack |]
+        . flip (PCRE.match $ memoizeRegex $(uniq) $(pre)) pcreExecOpts . B.pack |]
   where cnt = max + 2
         vs = [mkName $ "v" ++ show i | i <- [0..max]]
-{-        uniq = newName "bs" >>= return . LitE . StringL . show
-        --TODO: make sure this takes advantage of bytestring fusion stuff
+        uniq = newName "bs" >>= return . LitE . StringL . show
+        --TODO: make sure this takes advantage of bytestring fusion stuff - is
+        -- the right pack / unpack
         pre = [| B.pack $(runIO (precompile (B.pack pat) pcreOpts) >>= 
                         return . LitE . StringL . B.unpack . fromJust) |]
- -}
         maps = LamE [ListP . (WildP:) $ map VarP vs]
                     (TupE . map (uncurry AppE)
                     -- filter out all "Nothing" exprs

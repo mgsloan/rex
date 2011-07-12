@@ -58,17 +58,15 @@ memoizeRegex :: String -> B.ByteString -> Regex
 memoizeRegex = unsafePerformIO $ do
 --  print "creating new memoize map"
   r <- newIORef M.empty
-  --r2 <- newIORef [] -- Used to hold onto references to the bytestrings
   return $ \k bytes -> unsafePerformIO $ do
     m <- readIORef r
     case M.lookup k m of
       Just y -> do
---        tab <- regexToTable y
+        tab <- regexToTable y
 --        print ("used cache for " ++ k ++ "\nyielding " ++ show tab) 
         return y
       Nothing -> do
         result <- regexFromTable bytes
         writeIORef r (M.insert k result m)
-   --     modifyIORef r2 (bytes:)
 --        print ("stored cache for " ++ k ++ ":\n" ++ show bytes)
         return result
