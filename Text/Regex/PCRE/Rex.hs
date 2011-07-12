@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, QuasiQuotes, TupleSections, ParallelListComp, ViewPatterns #-}
+{-# LANGUAGE TemplateHaskell, QuasiQuotes, TupleSections, ViewPatterns #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -228,7 +228,7 @@ buildExp bs max pat xs = do
         vs = [mkName $ "v" ++ show i | i <- [0..max]]
         uniq = newName "bs" >>= return . LitE . StringL . show
         --TODO: make sure this takes advantage of bytestring fusion stuff - is
-        -- the right pack / unpack
+        -- the right pack / unpack. Or use XOverloadedStrings
         pre = [| B.pack $(runIO (precompile (B.pack pat) pcreOpts) >>= 
                         return . LitE . StringL . B.unpack . fromJust) |]
         maps = LamE [ListP . (WildP:) $ map VarP vs]

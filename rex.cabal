@@ -6,7 +6,9 @@ Description:         Provides a quasi-quoter for regular expressions which
                      representing the results of the captures.  Allows the user 
                      to specify parsers for captures as inline Haskell.  Can 
                      also be used to provide typeful pattern matching in
-                     function definitions and case patterns.
+                     function definitions and pattern matches.  Also, it
+                     precompiles the regular expressions into a PCRE
+                     compiled byte-array representation, at compile time.
 License:             BSD3
 License-file:        LICENSE
 Author:              Michael Sloan
@@ -25,10 +27,9 @@ Source-Repository head
   Location: git://github.com/mgsloan/rex
 
 Library
-  Extensions:        TemplateHaskell, QuasiQuotes, TupleSections,
-                     ParallelListComp, ViewPatterns
-  Exposed-modules:   Text.Regex.PCRE.Rex,
-                     Text.Regex.PCRE.Precompile
+  Extensions:        TemplateHaskell, QuasiQuotes, TupleSections, ViewPatterns
+  Exposed-modules:   Text.Regex.PCRE.Rex, Text.Regex.PCRE.Precompile
   Build-depends:     base >= 3.0 && < 6, template-haskell >= 2.5.0.0,
-                     haskell-src-meta, MissingH, bytestring, pcre-light, split
+                     haskell-src-meta, MissingH, bytestring, pcre-light,
+                     split, containers, ghc >= 7
   Ghc-options:       -Wall

@@ -7,12 +7,6 @@ main = interact (unlines . map (show . math) . lines)
 
 math x = mathl x 0
 
-{-
-mathl (d:xs) acc | isDigit d = (d:acc)
-                 | d == '+' = 
-                 | otherwise = read $ reverse acc
--}
-
 mathl [] x = x
 mathl [rex|^  \s*(?{ y }\d+)\s*(?{ id -> s }.*)|]  x = mathl s y
 mathl [rex|^\+\s*(?{ y }\d+)\s*(?{ id -> s }.*)$|] x = mathl s $ x + y
@@ -36,31 +30,15 @@ parseDate [rex|^(?{ y }(?:19|20)\d\d)[- /.]
   || (m == 2 &&
        (d ==29 && not (mod y 4 == 0 && (mod y 100 /= 0 || mod y 400 == 0)))
     || (d > 29)) = Nothing
-
   | otherwise = Just (y, m, d)
-
 parseDate _ = Nothing
 
 onNull a f [] = a
 onNull _ f xs = f xs
 
-nonNull  = onNull Nothing
+nonNull = onNull Nothing
 
 disjunct [rex| ^(?:(?{nonNull $ Just . head -> a} .)
              | (?{nonNull $ Just . head -> b} ..)
              | (?{nonNull $ Just . last -> c} ...))$|] =
   head $ catMaybes [a, b, c]
-
-{-
-disjunct [rex| ^(?:(?{head -> a} .)
-             | (?{head -> a} ..)
-             | (?{tail -> [a, _]} ...))$|] = a
-
-
-
-disjunct [rex| ^(?:(?{\x ->
-  case head x of
-    -> a} .)
-             | (?{head -> a} ..)
-             | (?{tail -> (a, b)} ...))$|] = a
--}
