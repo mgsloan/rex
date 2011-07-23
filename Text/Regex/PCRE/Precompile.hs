@@ -83,7 +83,7 @@ memoizeRegex = unsafePerformIO $ do
     m <- readIORef r
     case M.lookup k m of
       Just y -> do
-        tab <- regexToTable y
+--        tab <- regexToTable y
 --        print ("used cache for " ++ k ++ "\nyielding " ++ show tab) 
         return y
       Nothing -> do

@@ -134,8 +134,6 @@ import Language.Haskell.TH
 import Language.Haskell.TH.Quote
 import Language.Haskell.Meta.Parse
 
-import System.IO.Unsafe (unsafePerformIO)
-
 type ParseChunk = Either String (Int, String)
 type ParseChunks = (Int, String, [(Int, String)])
 
@@ -215,17 +213,17 @@ makePat bs (cnt, pat, exs) = do
 -- number of captures, the pattern string, and a list of capture expressions,
 -- yields the template Haskell Exp which parses a string into a tuple.
 buildExp :: Bool -> Int -> String -> [Maybe Exp] -> ExpQ
-buildExp bs max pat xs = do
+buildExp bs cnt pat xs =
   if bs
   then [| liftM ( $(return maps)
-                . padRight B.empty cnt)
-        . (flip $ PCRE.match $ memoizeRegex $(uniq) $(pre)) pcreExecOpts |]
+                . padRight B.empty pad)
+        . (flip $ PCRE.match $ regex $(return . LitE . StringL $ pat)) pcreExecOpts |]
   else [| liftM ( $(return maps)
-                . padRight "" cnt
+                . padRight "" pad
                 . map B.unpack)
-        . flip (PCRE.match $ memoizeRegex $(uniq) $(pre)) pcreExecOpts . B.pack |]
-  where cnt = max + 2
-        vs = [mkName $ "v" ++ show i | i <- [0..max]]
+        . flip (PCRE.match $ regex $(return . LitE . StringL $ pat)) pcreExecOpts . B.pack |]
+  where pad = cnt + 2
+        vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
         uniq = newName "bs" >>= return . LitE . StringL . show
         --TODO: make sure this takes advantage of bytestring fusion stuff - is
         -- the right pack / unpack. Or use XOverloadedStrings
@@ -242,7 +240,7 @@ buildExp bs max pat xs = do
 -- default for strings which just consist of whitespace.
 processExp :: Bool -> String -> Exp
 processExp bs xs = forceEitherMsg ("Error while parsing capture mapper " ++ xs)
-               . parseExp . onSpace (defaultExp bs) id $ xs
+                 . parseExp . onSpace (defaultExp bs) id $ xs
 
 -- Parse a Haskell pattern match into a template Haskell Pat, yielding Nothing for
 -- strings which just consist of whitespace.
