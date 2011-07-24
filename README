@@ -1,4 +1,4 @@
-http://hackage.haskell.org/package/typed-regex
+http://hackage.haskell.org/package/rex
 
 Provides a quasi-quoter for regular expressions which
 yields a tuple, of appropriate arity and types,
@@ -9,7 +9,6 @@ function definitions and case patterns.
 
 To build / install:
 
-chmod ugo+x Setup.hs
 ./Setup.hs configure --user
 ./Setup.hs build
 ./Setup.hs install
