@@ -180,19 +180,22 @@ makeExp bs (cnt, pat, exs) = buildExp bs cnt pat
 --      [reg| ... (?{e1} ...) ... (?{e2} ...) ... |] -> (v1, v2)
 makePat :: Bool -> ParseChunks -> PatQ
 makePat bs (cnt, pat, exs) = do
-  viewExp <- buildExp bs cnt pat $ map (liftM fst) ys
-  return . ViewP viewExp . ConP (mkName "Just") . (\x -> [x])
-         . TupP . map snd $ catMaybes ys
+  viewExp <- buildExp bs cnt pat $ map (liftM fst) views
+  return . ViewP viewExp
+         . (\xs -> ConP (mkName "Just") [TupP xs])
+         . map snd $ catMaybes views
  where
-  ys = map (floatSnd . processView . snd . head)
+  views :: [Maybe (Exp, Pat)]
+  views = map (floatSnd . processView . snd . head)
      . groupSortBy (comparing fst)
      $ exs ++ [(i, "") | i <- [0..cnt]]
 
+  processView :: String -> (Exp, Maybe Pat)
   processView xs = case splitFromBack 2 ((split . onSublist) "->" xs) of
     (_, [r]) -> onSpace (error $ "blank pattern in: " ++ r)
                         ((processExp bs "",) . processPat) r
     -- View pattern
-    (concat -> l, [_, r]) -> (processExp bs l, processPat r)
+    (l, [_, r]) -> (processExp bs $ concat l, processPat r)
     -- Included so that Haskell doesn't warn about non-exhaustive patterns
     -- (even though the above are exhaustive in this context)
     _ -> undefined

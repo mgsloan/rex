@@ -46,7 +46,7 @@ regexToTable (Regex p _) =
     success <- c_pcre_fullinfo pcre nullPtr info_size res
     len <- return . fromIntegral =<< (peek res :: IO CInt)
     if success >= 0 
-      then withForeignPtr p (liftM Just  . unsafePackCStringLen . (, len) . castPtr)
+      then withForeignPtr p (liftM Just . unsafePackCStringLen . (, len) . castPtr)
       else return Nothing
 
 -- | Creates a regular expression
