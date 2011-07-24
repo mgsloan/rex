@@ -18,15 +18,15 @@
 -- in the regular expression.
 --
 -- 3) By default utilizes type inference to determine how to parse capture
--- patterns - uses the "read" function's return-type polymorphism
+-- patterns - uses the 'read' function's return-type polymorphism
 --
 -- 4) Allows for the inline interpolation of a mapping function String -> a.
 --
 -- 5) Precompiles the regular expression at compile time, by calling into the
 -- PCRE library and storing a ByteString literal representation of its state.
 --
--- Here's a silly example which parses peano numbers of the form "Z", "S Z",
--- "S S Z", etc.  The \s+ means that it is not sensitive to the quantity or type
+-- Here's a silly example which parses peano numbers of the form Z, S Z,
+-- S S Z, etc.  The \s+ means that it is not sensitive to the quantity or type
 -- of seperating whitespace. (these examples can also be found in Test.hs)
 --
 -- > peano :: String -> Maybe Int
@@ -102,12 +102,13 @@
 -- quasiquoter implicitely packs the input into a bystestring, and unpacks the
 -- results to strings before providing them to your mappers.  Use [brex| ... ]
 -- to bypass this, and process raw ByteStrings.  In order to preserve the
--- same default behavior, "read . unpack" is the default mapper for brex.
+-- same default behavior, \"read . unpack\" is the default mapper for brex.
 --
 -- Inspired by / copy-modified from Matt Morrow's regexqq package:
--- http://hackage.haskell.org/packages/archive/regexqq/latest/doc/html/src/Text-Regex-PCRE-QQ.html
+-- <http://hackage.haskell.org/packages/archive/regexqq/latest/doc/html/src/Text-Regex-PCRE-QQ.html>
+--
 -- And code from Erik Charlebois's interpolatedstring-qq package:
--- http://hackage.haskell.org/packages/archive/interpolatedstring-qq/latest/doc/html/Text-InterpolatedString-QQ.html
+-- <http://hackage.haskell.org/packages/archive/interpolatedstring-qq/latest/doc/html/Text-InterpolatedString-QQ.html>
 --
 -----------------------------------------------------------------------------
 
