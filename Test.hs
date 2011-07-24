@@ -1,9 +1,11 @@
 {-# LANGUAGE TemplateHaskell, QuasiQuotes, ViewPatterns #-}
 
+module Test where
+
 import Text.Regex.PCRE.Rex
 import Data.Maybe (catMaybes)
 
-main = interact (unlines . map (show . math) . lines)
+--main = interact (unlines . map (show . math) . lines)
 
 math x = mathl x 0
 

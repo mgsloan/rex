@@ -113,7 +113,6 @@
 
 module Text.Regex.PCRE.Rex (rex, brex, maybeRead, padRight) where
 
-import Text.Regex.PCRE.Light (Regex,PCREOption,PCREExecOption)
 import qualified Text.Regex.PCRE.Light as PCRE
 import Text.Regex.PCRE.Precompile
 
@@ -128,11 +127,11 @@ import Data.Maybe (catMaybes, listToMaybe, fromJust, isJust)
 import Data.Ord (comparing)
 import Data.Char (isSpace)
 
-import Debug.Trace
-
 import Language.Haskell.TH
 import Language.Haskell.TH.Quote
 import Language.Haskell.Meta.Parse
+
+import System.IO.Unsafe (unsafePerformIO)
 
 type ParseChunk = Either String (Int, String)
 type ParseChunks = (Int, String, [(Int, String)])
@@ -175,7 +174,7 @@ checkRegex f x@(_, pat, _) = precompile (B.pack pat) pcreOpts `seq` f x
 -------------------------------------------------------------------------------
 
 -- Creates the template haskell Exp which corresponds to the parsed interpolated
--- regex.  This particular code mainly just handles making "maybeRead" the
+-- regex.  This particular code mainly just handles making "read" the
 -- default for captures which lack a parser definition, and defaulting to making
 -- the parser that doesn't exist
 makeExp :: Bool -> ParseChunks -> ExpQ
@@ -193,7 +192,7 @@ makeExp bs (cnt, pat, exs) = buildExp bs cnt pat
 makePat :: Bool -> ParseChunks -> PatQ
 makePat bs (cnt, pat, exs) = do
   viewExp <- buildExp bs cnt pat $ map (liftM fst) ys
-  return . ViewP viewExp . ConP (mkName "Just") . single
+  return . ViewP viewExp . ConP (mkName "Just") . (\x -> [x])
          . TupP . map snd $ catMaybes ys
  where
   ys = map (floatSnd . processView . snd . head)
@@ -213,18 +212,15 @@ makePat bs (cnt, pat, exs) = do
 -- number of captures, the pattern string, and a list of capture expressions,
 -- yields the template Haskell Exp which parses a string into a tuple.
 buildExp :: Bool -> Int -> String -> [Maybe Exp] -> ExpQ
-buildExp bs cnt pat xs =
-  if bs
-  then [| liftM ( $(return maps)
-                . padRight B.empty pad)
-        . (flip $ PCRE.match $ regex $(return . LitE . StringL $ pat)) pcreExecOpts |]
-  else [| liftM ( $(return maps)
-                . padRight "" pad
-                . map B.unpack)
-        . flip (PCRE.match $ regex $(return . LitE . StringL $ pat)) pcreExecOpts . B.pack |]
+buildExp bs cnt pat xs = if bs
+  then [| let r = unsafePerformIO (regexFromTable $(pre)) in 
+          liftM ( $(return maps) . padRight B.empty pad )
+        . (flip $ PCRE.match r) pcreExecOpts |]
+  else [| let r = unsafePerformIO (regexFromTable $(pre)) in
+          liftM ( $(return maps) . padRight "" pad . map B.unpack )
+        . flip (PCRE.match r) pcreExecOpts . B.pack |]
   where pad = cnt + 2
         vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
-        uniq = newName "bs" >>= return . LitE . StringL . show
         --TODO: make sure this takes advantage of bytestring fusion stuff - is
         -- the right pack / unpack. Or use XOverloadedStrings
         pre = [| B.pack $(runIO (precompile (B.pack pat) pcreOpts) >>= 
@@ -307,81 +303,41 @@ parseHaskell inp s ix = case inp of
 -- The following 2 functions are referenced in the generated TH code, as well as
 -- this module.
 
-{-
-pack :: String -> B.ByteString
-pack = B.pack . fmap c2w
-
-unpack :: B.ByteString -> String
-unpack = fmap w2c . B.unpack
--}
-
--- Compiles a regular expression with the default options.
-regex :: String -> Regex
-regex = flip PCRE.compile pcreOpts . B.pack
-
--- | The default read definition - yields "Just x" when there is a valid parse,
---   and Nothing otherwise.
+-- | A possibly useful utility function - yields "Just x" when there is a valid
+-- parse, and Nothing otherwise.
 maybeRead :: (Read a) => String -> Maybe a
 maybeRead = fmap fst . listToMaybe . reads
-
 
 -- TODO: allow for a bundle of parameters to be passed in at the beginning
 -- of the quasiquote. Would also be a juncture for informing arity /
 -- extension information.
 
-pcreOpts :: [PCREOption]
+pcreOpts :: [PCRE.PCREOption]
 pcreOpts =
   [ PCRE.extended
   , PCRE.multiline ]
   -- , dotall, caseless, utf8
   -- , newline_any, PCRE.newline_crlf ]
 
-pcreExecOpts :: [PCREExecOption]
+pcreExecOpts :: [PCRE.PCREExecOption]
 pcreExecOpts = []
   -- [ PCRE.exec_newline_crlf
   -- , exec_newline_any, PCRE.exec_notempty
   -- , PCRE.exec_notbol, PCRE.exec_noteol ]
 
-single :: a -> [a]
-single x = [x]
-
 groupSortBy :: (a -> a -> Ordering) -> [a] -> [[a]]
 groupSortBy f = groupBy (\x -> (==EQ) . f x) . sortBy f
-
-debug :: (Show a) => a -> a
-debug x = trace (show x) x
-
-mapFst :: (a -> c) -> (a, b) -> (c, b)
-mapFst f (x, y) = (f x, y)
-
-mapSnd :: (b -> c) -> (a, b) -> (a, c)
-mapSnd f (x, y) = (x, f y)
-
-floatFst :: (Functor f) => (f a, b) -> f (a, b)
-floatFst (x, y) = fmap (,y) x
-
-floatSnd :: (Functor f) => (a, f b) -> f (a, b)
-floatSnd (x, y) = fmap (x,) y
-
-floatBoth :: (Monad m) => (m a, m b) -> m (a, b)
-floatBoth (x, y) = do
-  x' <- x
-  y' <- y
-  return (x', y')
 
 splitFromBack :: Int -> [a] -> ([a], [a])
 splitFromBack i xs = (reverse b, reverse a)
   where (a, b) = splitAt i $ reverse xs
 
-dropAllBut :: Int -> [a] -> [a]
-dropAllBut i = reverse . take i . reverse
-
 onSpace :: a -> (String -> a) -> String -> a
 onSpace x f s | all isSpace s = x
               | otherwise = f s
 
--- Not quite the ordinary padding function - also trims. TODO: make sure trim
--- behavior neverused by the regex parser. (could be a bug)
+-- | Given a desired list-length, if the passed list is too short, it is padded
+-- with the given element.  Otherwise, it trims.
 padRight :: a -> Int -> [a] -> [a]
 padRight _ 0 xs = xs
 padRight v i [] = replicate i v
@@ -390,5 +346,27 @@ padRight v i (x:xs) = x : padRight v (i-1) xs
 mapLeft :: (a -> a') -> Either a b -> Either a' b
 mapLeft f = either (Left . f) Right
 
+mapSnd :: (b -> c) -> (a, b) -> (a, c)
+mapSnd f (x, y) = (x, f y)
+
+floatSnd :: (Functor f) => (a, f b) -> f (a, b)
+floatSnd (x, y) = fmap (x,) y
+
+{- for completeness:
+
 mapRight :: (b -> b') -> Either a b -> Either a b'
 mapRight f = either Left (Right . f)
+
+mapFst :: (a -> c) -> (a, b) -> (c, b)
+mapFst f (x, y) = (f x, y)
+
+floatFst :: (Functor f) => (f a, b) -> f (a, b)
+floatFst (x, y) = fmap (,y) x
+
+floatBoth :: (Monad m) => (m a, m b) -> m (a, b)
+floatBoth (x, y) = do
+  x' <- x
+  y' <- y
+  return (x', y')
+
+-}
