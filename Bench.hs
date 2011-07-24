@@ -17,6 +17,5 @@ addEm n = map math $
 main = defaultMain [
        bgroup "math" [ bench "10" $ nf addEm 10
                      , bench "1000" $ nf addEm 1000
-                     , bench "10000" $ nf addEm 10000
                      ]
                     ]

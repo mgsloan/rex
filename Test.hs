@@ -1,16 +1,16 @@
 {-# LANGUAGE TemplateHaskell, QuasiQuotes, ViewPatterns #-}
 
-module Test where
+module Main where
 
 import Text.Regex.PCRE.Rex
 import Data.Maybe (catMaybes)
 
---main = interact (unlines . map (show . math) . lines)
+main = interact (unlines . map (show . math) . lines)
 
 math x = mathl x 0
 
 mathl [] x = x
-mathl [rex|^  \s*(?{ y }\d+)\s*(?{ id -> s }.*)|]  x = mathl s y
+mathl [rex|^  \s*(?{ y }\d+)\s*(?{ id -> s }.*)$|] x = mathl s y
 mathl [rex|^\+\s*(?{ y }\d+)\s*(?{ id -> s }.*)$|] x = mathl s $ x + y
 mathl [rex|^ -\s*(?{ y }\d+)\s*(?{ id -> s }.*)$|] x = mathl s $ x - y
 mathl [rex|^\*\s*(?{ y }\d+)\s*(?{ id -> s }.*)$|] x = mathl s $ x * y

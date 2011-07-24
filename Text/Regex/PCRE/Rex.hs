@@ -124,6 +124,7 @@ import Data.Either.Utils (forceEitherMsg)
 import Data.List (groupBy, sortBy)
 import Data.List.Split (split, onSublist)
 import Data.Maybe (catMaybes, listToMaybe, fromJust, isJust)
+import Data.Maybe.Utils (forceMaybeMsg)
 import Data.Ord (comparing)
 import Data.Char (isSpace)
 
@@ -147,28 +148,14 @@ type ParseChunks = (Int, String, [(Int, String)])
 -- | The regular expression quasiquoter.
 rex, brex :: QuasiQuoter
 rex = QuasiQuoter
-        (checkRegex (makeExp False) . parseIt)
-        (checkRegex (makePat False) . parseIt)
+        (makeExp False . parseIt)
+        (makePat False . parseIt)
         undefined undefined
 
 brex = QuasiQuoter
-        (checkRegex (makeExp True) . parseIt)
-        (checkRegex (makePat True) . parseIt)
+        (makeExp True . parseIt)
+        (makePat True . parseIt)
         undefined undefined
-
--- Default parsers, one for the bytestring case and one for the string.
-defaultExp :: Bool -> String
-defaultExp True = "read . unpack"
-defaultExp False = "read"
-
--- Gives an error at compile time if the regex string is invalid.
-checkRegex :: (ParseChunks -> a) -> ParseChunks -> a
-checkRegex f x@(_, pat, _) = precompile (B.pack pat) pcreOpts `seq` f x
-{-
-  forceEitherMsg ("Error compiling regular expression [reg|"  ++ pat ++ "|]\n")
-    (PCRE.compileM (B.pack pat) pcreOpts) `seq` f x
-    -}
-
 
 -- Template Haskell Code Generation
 -------------------------------------------------------------------------------
@@ -213,24 +200,31 @@ makePat bs (cnt, pat, exs) = do
 -- yields the template Haskell Exp which parses a string into a tuple.
 buildExp :: Bool -> Int -> String -> [Maybe Exp] -> ExpQ
 buildExp bs cnt pat xs = if bs
-  then [| let r = unsafePerformIO (regexFromTable $(pre)) in 
+  then [| let r = unsafePerformIO (regexFromTable $! $(table_bytes)) in 
           liftM ( $(return maps) . padRight B.empty pad )
         . (flip $ PCRE.match r) pcreExecOpts |]
-  else [| let r = unsafePerformIO (regexFromTable $(pre)) in
+  else [| let r = unsafePerformIO (regexFromTable $! $(table_bytes)) in
           liftM ( $(return maps) . padRight "" pad . map B.unpack )
         . flip (PCRE.match r) pcreExecOpts . B.pack |]
   where pad = cnt + 2
-        vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
         --TODO: make sure this takes advantage of bytestring fusion stuff - is
         -- the right pack / unpack. Or use XOverloadedStrings
-        pre = [| B.pack $(runIO (precompile (B.pack pat) pcreOpts) >>= 
-                        return . LitE . StringL . B.unpack . fromJust) |]
+        table_bytes = [| B.pack $(runIO table_string) |]
+        table_string = precompile (B.pack pat) pcreOpts >>= 
+          return . LitE . StringL . B.unpack . 
+          forceMaybeMsg ("Error while getting PCRE compiled representation\n")
+        vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
         maps = LamE [ListP . (WildP:) $ map VarP vs]
                     (TupE . map (uncurry AppE)
                     -- filter out all "Nothing" exprs
                     . map (first fromJust) . filter (isJust . fst)
                     -- [(Expr, Variable applied to)]
                     . zip xs $ map VarE vs)
+
+-- Default parsers, one for the bytestring case and one for the string.
+defaultExp :: Bool -> String
+defaultExp True = "read . unpack"
+defaultExp False = "read"
 
 -- Parse a Haskell expression into a template Haskell Exp, yielding the
 -- default for strings which just consist of whitespace.
