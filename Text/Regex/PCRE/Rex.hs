@@ -146,13 +146,14 @@ type ParseChunks = (Int, String, [(Int, String)])
 
 {- TODO: target Text.Regex.Base -}
 
--- | The regular expression quasiquoter.
+-- | The regular expression quasiquoter for strings.
 rex, brex :: QuasiQuoter
 rex = QuasiQuoter
         (makeExp False . parseIt)
         (makePat False . parseIt)
         undefined undefined
 
+-- | The regular expression quasiquoter for Data.ByteString.Char8.
 brex = QuasiQuoter
         (makeExp True . parseIt)
         (makePat True . parseIt)
@@ -213,7 +214,7 @@ buildExp bs cnt pat xs = if bs
         table_bytes = [| B.pack $(runIO table_string) |]
         table_string = precompile (B.pack pat) pcreOpts >>= 
           return . LitE . StringL . B.unpack . 
-          forceMaybeMsg ("Error while getting PCRE compiled representation\n")
+          forceMaybeMsg "Error while getting PCRE compiled representation\n"
         vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
         maps = LamE [ListP . (WildP:) $ map VarP vs]
                     (TupE . map (uncurry AppE)
@@ -294,9 +295,6 @@ parseHaskell inp s ix = case inp of
 
 -- Utils
 -------------------------------------------------------------------------------
-
--- The following 2 functions are referenced in the generated TH code, as well as
--- this module.
 
 -- | A possibly useful utility function - yields "Just x" when there is a valid
 -- parse, and Nothing otherwise.
