@@ -32,15 +32,16 @@ import Foreign.C.Types (CInt)
 import Text.Regex.PCRE.Light
 import Text.Regex.PCRE.Light.Base
 
+type CompiledBytes = B.ByteString
+
 -- | Compiles the given regular expression, and assuming nothing bad
 -- happens, yields the bytestring filled with PCRE's compiled
 -- representation.
-precompile :: B.ByteString -> [PCREOption] -> IO (Maybe B.ByteString)
+precompile :: B.ByteString -> [PCREOption] -> IO (Maybe CompiledBytes)
 precompile pat opts = regexToTable $ compile pat opts
 
--- | Takes a compiled regular expression adn yields its bytestring
--- representation.
-regexToTable :: Regex -> IO (Maybe B.ByteString)
+-- | Takes a compiled regular expression, and yields .
+regexToTable :: Regex -> IO (Maybe CompiledBytes)
 regexToTable (Regex p _) =
   withForeignPtr p $ \pcre -> alloca $ \res -> do
     success <- c_pcre_fullinfo pcre nullPtr info_size res
@@ -49,8 +50,8 @@ regexToTable (Regex p _) =
       then withForeignPtr p (liftM Just . unsafePackCStringLen . (, len) . castPtr)
       else return Nothing
 
--- | Creates a regular expression
-regexFromTable :: B.ByteString -> IO Regex
+-- | Creates a regular expression from the compiled representation.
+regexFromTable :: CompiledBytes  -> IO Regex
 regexFromTable bytes = unsafeUseAsCString bytes $ \cstr -> do
    ptr <- newForeignPtr_ (castPtr cstr)
    return $ Regex ptr bytes

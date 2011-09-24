@@ -17,12 +17,9 @@
 -- 2) Arity of resulting tuple based on the number of selected capture patterns
 -- in the regular expression.
 --
--- 3) By default utilizes type inference to determine how to parse capture
--- patterns - uses the 'read' function's return-type polymorphism
+-- 3) Allows for the inline interpolation of mapping functions :: String -> a.
 --
--- 4) Allows for the inline interpolation of a mapping function String -> a.
---
--- 5) Precompiles the regular expression at compile time, by calling into the
+-- 4) Precompiles the regular expression at compile time, by calling into the
 -- PCRE library and storing a ByteString literal representation of its state.
 --
 -- Here's a silly example which parses peano numbers of the form Z, S Z,
@@ -43,22 +40,20 @@
 -- > *Main> peano "invalid"
 -- > Nothing
 --
--- The token \"(?{\" introduces a capture group which has a mapping applied to the
--- result - in this case \"length . filter (=='S')\". If an expression is omitted, 
--- e.g. \"(?{} ... )\", then there is an implicit usage of the read function.
--- 
--- If the ?{ ... } are omitted, then the capture group is not taken as part of
--- the results of the match.
--- 
--- > vect2d :: String -> Maybe (Int, Int)
--- > vect2d = [rex|^<\s* (?{}\d+) \s*,\s* (?{}\d+) \s*>$|]
+-- The token \"(?{\" introduces a capture group which has a mapping applied to
+-- the -- result - in this case \"length . filter (=='S')\".  If the ?{ ... }
+-- are omitted, then the capture group is not taken as part of the results of
+-- the match.  If the contents of the ?{ ... } is omitted, then "id" is assumed:
+--
+-- parsePair :: String -> Maybe (String, String)
+-- parsePair = [rex|^<\s* (?{ }[^\s,>]+) \s*,\s* (?{ }[^\s,>]+) \s*>$|]
 --
 -- The following example is derived from http://www.regular-expressions.info/dates.html
 --
 -- > parseDate :: String -> Maybe (Int, Int, Int)
--- > parseDate [rex|^(?{ y }(?:19|20)\d\d)[- /.]
--- >                 (?{ m }0[1-9]|1[012])[- /.]
--- >                 (?{ d }0[1-9]|[12][0-9]|3[01])$|]
+-- > parseDate [rex|^(?{ read -> y }(?:19|20)\d\d)[- /.]
+-- >                 (?{ read -> m }0[1-9]|1[012])[- /.]
+-- >                 (?{ read -> d }0[1-9]|[12][0-9]|3[01])$|]
 -- >   |  (d > 30 && (m `elem` [4, 6, 9, 11]))
 -- >   || (m == 2 &&
 -- >        (d == 29 && not (mod y 4 == 0 && (mod y 100 /= 0 || mod y 400 == 0)))
@@ -68,15 +63,14 @@
 --
 -- The above example makes use of the regex quasi-quoter as a pattern matcher.
 -- The interpolated Haskell patterns are used to construct an implicit view
--- pattern.  The above pattern is expanded to the equivalent:
+-- pattern out of the inlined ones.  The above pattern is expanded to the
+-- equivalent:
 --
--- > parseDate ([rex|^(?{}(?:19|20)\d\d)[- /.]
--- >                  (?{}0[1-9]|1[012])[- /.]
--- >                  (?{}0[1-9]|[12][0-9]|3[01])$|]
+-- > parseDate ([rex|^(?{ read }(?:19|20)\d\d)[- /.]
+-- >                  (?{ read }0[1-9]|1[012])[- /.]
+-- >                  (?{ read }0[1-9]|[12][0-9]|3[01])$|]
 -- >           -> Just (y, m, d))
 --
--- In order to provide a capture-mapper along with a pattern, use view-patterns
--- inside the interpolation brackets.
 --
 -- Caveat: Since haskell-src-exts does not support parsing view-patterns, the
 -- above is implemented as a relatively naive split on \"->\".  It presumes that
@@ -101,8 +95,7 @@
 -- ByteStrings, as it does not natively speak Haskell lists.  The [rex| ... ]
 -- quasiquoter implicitely packs the input into a bystestring, and unpacks the
 -- results to strings before providing them to your mappers.  Use [brex| ... ]
--- to bypass this, and process raw ByteStrings.  In order to preserve the
--- same default behavior, \"read . unpack\" is the default mapper for brex.
+-- to bypass this, and process raw ByteStrings. 
 --
 -- Inspired by / copy-modified from Matt Morrow's regexqq package:
 -- <http://hackage.haskell.org/packages/archive/regexqq/latest/doc/html/src/Text-Regex-PCRE-QQ.html>
@@ -138,13 +131,12 @@ import System.IO.Unsafe (unsafePerformIO)
 type ParseChunk = Either String (Int, String)
 type ParseChunks = (Int, String, [(Int, String)])
 
-{- TODO: idea - provide a variant which allows splicing in an expression
-  that evaluates to regex string.  The tricky thing here is that this
-  splice might contain capture groups - thus, the parser here would need to
-  be referenced in order to dispatch 
+{- TODO:
+   * Fix mentioned caveats
+   * Target Text.Regex.Base ? 
+   * provide a variant which allows splicing in an expression that evaluates to
+     regex string.
 -}
-
-{- TODO: target Text.Regex.Base -}
 
 -- | The regular expression quasiquoter for strings.
 rex, brex :: QuasiQuoter
@@ -187,12 +179,11 @@ makePat bs (cnt, pat, exs) = do
  where
   views :: [Maybe (Exp, Pat)]
   views = map (floatSnd . processView . snd . head)
-     . groupSortBy (comparing fst)
-     $ exs ++ [(i, "") | i <- [0..cnt]]
+     . groupSortBy (comparing fst) $ exs
 
   processView :: String -> (Exp, Maybe Pat)
   processView xs = case splitFromBack 2 ((split . onSublist) "->" xs) of
-    (_, [r]) -> onSpace (error $ "blank pattern in: " ++ r)
+    (_, [r]) -> onSpace (error $ "blank pattern in view: " ++ r)
                         ((processExp bs "",) . processPat) r
     -- View pattern
     (l, [_, r]) -> (processExp bs $ concat l, processPat r)
@@ -226,22 +217,17 @@ buildExp bs cnt pat xs = if bs
                     -- [(Expr, Variable applied to)]
                     . zip xs $ map VarE vs)
 
--- Default parsers, one for the bytestring case and one for the string.
-defaultExp :: Bool -> String
-defaultExp True = "read . unpack"
-defaultExp False = "read"
-
--- Parse a Haskell expression into a template Haskell Exp, yielding the
--- default for strings which just consist of whitespace.
+-- Parse a Haskell expression into a template Haskell Exp
 processExp :: Bool -> String -> Exp
-processExp bs xs = forceEitherMsg ("Error while parsing capture mapper " ++ xs)
-                 . parseExp . onSpace (defaultExp bs) id $ xs
+processExp bs xs = forceEitherMsg ("Error while parsing capture mapper `" ++ xs ++ "'")
+                 . parseExp $ onSpace "id" id xs
 
 -- Parse a Haskell pattern match into a template Haskell Pat, yielding Nothing for
 -- strings which just consist of whitespace.
 processPat :: String -> Maybe Pat
 processPat xs = onSpace Nothing
-  (Just . forceEitherMsg ("Error while parsing capture pattern " ++ xs) . parsePat) xs
+  (Just . forceEitherMsg ("Error while parsing capture pattern `" ++ xs ++ "'")
+        . parsePat) xs
 
 -- Parsing
 -------------------------------------------------------------------------------
