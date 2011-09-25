@@ -45,11 +45,4 @@ disjunct [rex| ^(?:(?{nonNull $ Just . head -> a} .)
              | (?{nonNull $ Just . last -> c} ...))$|] =
   head $ catMaybes [a, b, c]
 
-nocap = isJust $ [rex|jus \s nothin|] "jus nothin"
-nocapat [rex|jus \s nothin|] = "matched!"
-nocapat _ = "no match."
-
--- Ensure that the other variants compile:
-nctest = [ncrex|(?{}hello)|] "hello" == Just "hello"
 btest = [brex|(?{}hello)|] (B.pack "hello") == Just (B.pack "hello")
-ncbtest = [ncbrex|(?{}hello)|] (B.pack "hello") == Just (B.pack "hello")

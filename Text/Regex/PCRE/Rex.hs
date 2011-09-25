@@ -22,6 +22,9 @@
 -- 4) Precompiles the regular expression at compile time, by calling into the
 -- PCRE library and storing a ByteString literal representation of its state.
 --
+-- 5) Compile-time configurable to use different PCRE options, turn off
+-- precompilation, or use ByteStrings.
+--
 -- Since this is a quasiquoter library that generates code using view patterns,
 -- the following extensions are required:
 --
@@ -102,14 +105,23 @@
 -- >  <interactive>: out of memory (requested 17584491593728 bytes)
 --
 -- Used to occur when evaluating in GHCi, due to a bug in the way precompilation
--- worked.  If this happens, please report it, and as a temporary work around
--- use \"ncrex\" or \"ncbrex\", versions which do not pre-compile.
+-- worked.  If this happens, please report it, and as a temporary work around,
+-- make your own quasiquoter using \"rexConf _ False _ _\" to disable
+-- pre-compilation.
 --
 -- Since pcre-light is a wrapper over a C API, the most efficient interface is
 -- ByteStrings, as it does not natively speak Haskell lists.  The [rex| ... ]
 -- quasiquoter implicitely packs the input into a bystestring, and unpacks the
--- results to strings before providing them to your mappers.  Use [brex| ... ]
--- to bypass this, and process raw ByteStrings.
+-- results to strings before providing them to your mappers.  The \"brex\"
+-- QuasiQuoter is provided for this purpose.  You can also define your own
+-- QuasiQuoter - the definitions of the default configurations are as follows:
+--
+-- > rex  = rexConf False True rexPCREOpts rexPCREExecOpts
+-- > brex = rexConf True  True rexPCREOpts rexPCREExecOpts
+--
+-- As mentioned, the other Bool determines whether precompilation is used.
+-- Due to GHC staging restrictions, your configuration will need to be in a
+-- different module than its usage.
 --
 -- Inspired by / copy-modified from Matt Morrow's regexqq package:
 -- <http://hackage.haskell.org/packages/archive/regexqq/latest/doc/html/src/Text-Regex-PCRE-QQ.html>
@@ -119,9 +131,11 @@
 --
 -----------------------------------------------------------------------------
 
-module Text.Regex.PCRE.Rex (rex, brex, ncrex, ncbrex, maybeRead, padRight) where
+module Text.Regex.PCRE.Rex (
+  rex, brex, maybeRead, padRight, rexConf, rexPCREOpts, rexPCREExecOpts) where
 
 import qualified Text.Regex.PCRE.Light as PCRE
+import qualified Text.Regex.PCRE.Light.Base as PCRE
 import Text.Regex.PCRE.Precompile
 
 import Control.Arrow (first, second)
@@ -145,44 +159,44 @@ import System.IO.Unsafe (unsafePerformIO)
 {- TODO:
   * Fix mentioned caveats
   * Target Text.Regex.Base ? 
-  * provide a variant which allows splicing in an expression that evaluates to
+  * Provide a variant which allows splicing in an expression that evaluates to
     regex string.
-  * Figure out a better way to provide static configuration to quasi-quoters,
-    and use this for:
-    - Providing string vs bytestring
-    - Providing pre-compilation or no
-    - Providing PCRE configuration
   * Add unit tests
 -}
 
 type ParseChunk = Either String (Int, String)
 type ParseChunks = (Int, String, [(Int, String)])
-type Config = (Bool, Bool)
+type Config = (Bool, Bool, [PCRE.PCREOption], [PCRE.PCREExecOption])
 
--- | The regular expression quasiquoter for strings.
-rex, brex, ncrex, ncbrex :: QuasiQuoter
-rex = QuasiQuoter
-        (makeExp (False, False) . parseIt)
-        (makePat (False, False) . parseIt)
+-- | Default regular expression quasiquoter for Strings, and ByteStrings.
+rex, brex :: QuasiQuoter
+rex  = rexConf False True rexPCREOpts rexPCREExecOpts
+brex = rexConf True  True rexPCREOpts rexPCREExecOpts
+
+
+rexPCREOpts :: [PCRE.PCREOption]
+rexPCREOpts =
+  [ PCRE.extended
+  , PCRE.multiline ]
+  -- , dotall, caseless, utf8
+  -- , newline_any, PCRE.newline_crlf ]
+
+rexPCREExecOpts :: [PCRE.PCREExecOption]
+rexPCREExecOpts = []
+  -- [ PCRE.exec_newline_crlf
+  -- , exec_newline_any, PCRE.exec_notempty
+  -- , PCRE.exec_notbol, PCRE.exec_noteol ]
+
+-- | A configureable regular-expression QuasiQuoter.  Takes the options to pass
+-- to the PCRE engine, along with Bools to flag ByteString usage and
+-- non-compilation respecively.
+rexConf :: Bool -> Bool -> [PCRE.PCREOption] -> [PCRE.PCREExecOption] -> QuasiQuoter
+rexConf bs pc os eos = QuasiQuoter
+        (makeExp conf . parseIt)
+        (makePat conf . parseIt)
         undefined undefined
-
--- | The regular expression quasiquoter for Data.ByteString.Char8.
-brex = QuasiQuoter
-        (makeExp (True, False) . parseIt)
-        (makePat (True, False) . parseIt)
-        undefined undefined
-
--- | The non-pre-compiling regular expression quasiquoter for strings.
-ncrex = QuasiQuoter
-          (makeExp (False, True) . parseIt)
-          (makePat (False, True) . parseIt)
-          undefined undefined
-
--- | The non-pre-compiling regular expression quasiquoter for Data.ByteString.Char8.
-ncbrex = QuasiQuoter
-          (makeExp (True, True) . parseIt)
-          (makePat (True, True) . parseIt)
-          undefined undefined
+ where
+  conf = (bs, pc, [PCRE.combineOptions os], [PCRE.combineExecOptions eos])
 
 -- Template Haskell Code Generation
 -------------------------------------------------------------------------------
@@ -228,18 +242,21 @@ makePat conf (cnt, pat, exs) = do
 -- number of captures, the pattern string, and a list of capture expressions,
 -- yields the template Haskell Exp which parses a string into a tuple.
 buildExp :: Config -> Int -> String -> [Maybe Exp] -> ExpQ
-buildExp (bs, nc) cnt pat xs =
+buildExp (bs, nc, pcreOpts, pcreExecOpts) cnt pat xs =
   [| let r = $(get_regex) in
-     $(process) . (flip $ PCRE.match r) pcreExecOpts
+     $(process) . (flip $ PCRE.match r) $(liftRS pcreExecOpts)
    . $(if bs then [| id |] else [| B.pack |]) |]
  where
   pad = cnt + 2
 
+  liftRS x = [| read shown |]
+   where shown = show x
+
   --TODO: make sure this takes advantage of bytestring fusion stuff - is
   -- the right pack / unpack. Or use XOverloadedStrings
   get_regex = if nc
-    then [| PCRE.compile (B.pack pat) pcreOpts|]
-    else [| unsafePerformIO (regexFromTable $! $(table_bytes)) |]
+    then [| unsafePerformIO (regexFromTable $! $(table_bytes)) |]
+    else [| PCRE.compile (B.pack pat) $(liftRS pcreOpts)|]
   table_bytes = [| B.pack $(runIO table_string) |]
   table_string = precompile (B.pack pat) pcreOpts >>= 
     return . LitE . StringL . B.unpack . 
@@ -334,19 +351,6 @@ maybeRead = fmap fst . listToMaybe . reads
 -- TODO: allow for a bundle of parameters to be passed in at the beginning
 -- of the quasiquote. Would also be a juncture for informing arity /
 -- extension information.
-
-pcreOpts :: [PCRE.PCREOption]
-pcreOpts =
-  [ PCRE.extended
-  , PCRE.multiline ]
-  -- , dotall, caseless, utf8
-  -- , newline_any, PCRE.newline_crlf ]
-
-pcreExecOpts :: [PCRE.PCREExecOption]
-pcreExecOpts = []
-  -- [ PCRE.exec_newline_crlf
-  -- , exec_newline_any, PCRE.exec_notempty
-  -- , PCRE.exec_notbol, PCRE.exec_noteol ]
 
 groupSortBy :: (a -> a -> Ordering) -> [a] -> [[a]]
 groupSortBy f = groupBy (\x -> (==EQ) . f x) . sortBy f
