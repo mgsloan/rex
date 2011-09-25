@@ -22,6 +22,11 @@
 -- 4) Precompiles the regular expression at compile time, by calling into the
 -- PCRE library and storing a ByteString literal representation of its state.
 --
+-- Since this is a quasiquoter library that generates code using view patterns,
+-- the following extensions are required:
+--
+-- > {-# LANGUAGE TemplateHaskell, QuasiQuotes, ViewPatterns #-}
+--
 -- Here's a silly example which parses peano numbers of the form Z, S Z,
 -- S S Z, etc.  The \s+ means that it is not sensitive to the quantity or type
 -- of seperating whitespace. (these examples can also be found in Test.hs)
@@ -48,7 +53,8 @@
 -- parsePair :: String -> Maybe (String, String)
 -- parsePair = [rex|^<\s* (?{ }[^\s,>]+) \s*,\s* (?{ }[^\s,>]+) \s*>$|]
 --
--- The following example is derived from http://www.regular-expressions.info/dates.html
+-- The following example is derived from
+-- http://www.regular-expressions.info/dates.html
 --
 -- > parseDate :: String -> Maybe (Int, Int, Int)
 -- > parseDate [rex|^(?{ read -> y }(?:19|20)\d\d)[- /.]
@@ -56,7 +62,7 @@
 -- >                 (?{ read -> d }0[1-9]|[12][0-9]|3[01])$|]
 -- >   |  (d > 30 && (m `elem` [4, 6, 9, 11]))
 -- >   || (m == 2 &&
--- >        (d == 29 && not (mod y 4 == 0 && (mod y 100 /= 0 || mod y 400 == 0)))
+-- >       (d == 29 && not (mod y 4 == 0 && (mod y 100 /= 0 || mod y 400 == 0)))
 -- >      || (d > 29)) = Nothing
 -- >   | otherwise = Just (y, m, d)
 -- > parseDate _ = Nothing
@@ -78,7 +84,7 @@
 -- expression on the left.  This allows for lambdas to be present in the
 -- expression, but prevents nesting view patterns.
 --
--- There are a few other inelegances:
+-- There are also a few other inelegances:
 --
 -- 1) PCRE captures, unlike .NET regular expressions, yield the last capture
 -- made by a particular pattern.  So, for example, (...)*, will only yield one
@@ -90,12 +96,20 @@
 -- a single variable / pattern, preferring the first non-empty option.  The
 -- general logic for this is a bit complicated, and postponed for a later
 -- release.
+-- 
+-- 3) While this error is believed to no longer exist, the following error
+-- 
+-- >  <interactive>: out of memory (requested 17584491593728 bytes)
+--
+-- Used to occur when evaluating in GHCi, due to a bug in the way precompilation
+-- worked.  If this happens, please report it, and as a temporary work around
+-- use \"ncrex\" or \"ncbrex\", versions which do not pre-compile.
 --
 -- Since pcre-light is a wrapper over a C API, the most efficient interface is
 -- ByteStrings, as it does not natively speak Haskell lists.  The [rex| ... ]
 -- quasiquoter implicitely packs the input into a bystestring, and unpacks the
 -- results to strings before providing them to your mappers.  Use [brex| ... ]
--- to bypass this, and process raw ByteStrings. 
+-- to bypass this, and process raw ByteStrings.
 --
 -- Inspired by / copy-modified from Matt Morrow's regexqq package:
 -- <http://hackage.haskell.org/packages/archive/regexqq/latest/doc/html/src/Text-Regex-PCRE-QQ.html>
@@ -105,7 +119,7 @@
 --
 -----------------------------------------------------------------------------
 
-module Text.Regex.PCRE.Rex (rex, brex, maybeRead, padRight) where
+module Text.Regex.PCRE.Rex (rex, brex, ncrex, ncbrex, maybeRead, padRight) where
 
 import qualified Text.Regex.PCRE.Light as PCRE
 import Text.Regex.PCRE.Precompile
@@ -128,28 +142,47 @@ import Language.Haskell.Meta.Parse
 
 import System.IO.Unsafe (unsafePerformIO)
 
-type ParseChunk = Either String (Int, String)
-type ParseChunks = (Int, String, [(Int, String)])
-
 {- TODO:
-   * Fix mentioned caveats
-   * Target Text.Regex.Base ? 
-   * provide a variant which allows splicing in an expression that evaluates to
-     regex string.
+  * Fix mentioned caveats
+  * Target Text.Regex.Base ? 
+  * provide a variant which allows splicing in an expression that evaluates to
+    regex string.
+  * Figure out a better way to provide static configuration to quasi-quoters,
+    and use this for:
+    - Providing string vs bytestring
+    - Providing pre-compilation or no
+    - Providing PCRE configuration
+  * Add unit tests
 -}
 
+type ParseChunk = Either String (Int, String)
+type ParseChunks = (Int, String, [(Int, String)])
+type Config = (Bool, Bool)
+
 -- | The regular expression quasiquoter for strings.
-rex, brex :: QuasiQuoter
+rex, brex, ncrex, ncbrex :: QuasiQuoter
 rex = QuasiQuoter
-        (makeExp False . parseIt)
-        (makePat False . parseIt)
+        (makeExp (False, False) . parseIt)
+        (makePat (False, False) . parseIt)
         undefined undefined
 
 -- | The regular expression quasiquoter for Data.ByteString.Char8.
 brex = QuasiQuoter
-        (makeExp True . parseIt)
-        (makePat True . parseIt)
+        (makeExp (True, False) . parseIt)
+        (makePat (True, False) . parseIt)
         undefined undefined
+
+-- | The non-pre-compiling regular expression quasiquoter for strings.
+ncrex = QuasiQuoter
+          (makeExp (False, True) . parseIt)
+          (makePat (False, True) . parseIt)
+          undefined undefined
+
+-- | The non-pre-compiling regular expression quasiquoter for Data.ByteString.Char8.
+ncbrex = QuasiQuoter
+          (makeExp (True, True) . parseIt)
+          (makePat (True, True) . parseIt)
+          undefined undefined
 
 -- Template Haskell Code Generation
 -------------------------------------------------------------------------------
@@ -158,9 +191,9 @@ brex = QuasiQuoter
 -- regex.  This particular code mainly just handles making "read" the
 -- default for captures which lack a parser definition, and defaulting to making
 -- the parser that doesn't exist
-makeExp :: Bool -> ParseChunks -> ExpQ
-makeExp bs (cnt, pat, exs) = buildExp bs cnt pat
-    . map (liftM (processExp bs) . snd . head)
+makeExp :: Config -> ParseChunks -> ExpQ
+makeExp conf (cnt, pat, exs) = buildExp conf cnt pat
+    . map (liftM processExp . snd . head)
     . groupSortBy (comparing fst)
     $ map (second Just) exs ++ [(i, Nothing) | i <- [0..cnt]]
   
@@ -170,23 +203,23 @@ makeExp bs (cnt, pat, exs) = buildExp bs cnt pat
 -- 
 -- E.g. [reg| ... (?{e1 -> v1} ...) ... (?{e2 -> v2} ...) ... |] becomes
 --      [reg| ... (?{e1} ...) ... (?{e2} ...) ... |] -> (v1, v2)
-makePat :: Bool -> ParseChunks -> PatQ
-makePat bs (cnt, pat, exs) = do
-  viewExp <- buildExp bs cnt pat $ map (liftM fst) views
+makePat :: Config -> ParseChunks -> PatQ
+makePat conf (cnt, pat, exs) = do
+  viewExp <- buildExp conf cnt pat $ map (liftM fst) views
   return . ViewP viewExp
          . (\xs -> ConP (mkName "Just") [TupP xs])
          . map snd $ catMaybes views
  where
   views :: [Maybe (Exp, Pat)]
   views = map (floatSnd . processView . snd . head)
-     . groupSortBy (comparing fst) $ exs
+        . groupSortBy (comparing fst) $ exs
 
   processView :: String -> (Exp, Maybe Pat)
   processView xs = case splitFromBack 2 ((split . onSublist) "->" xs) of
-    (_, [r]) -> onSpace (error $ "blank pattern in view: " ++ r)
-                        ((processExp bs "",) . processPat) r
+    (_, [r]) -> onSpace r (error $ "blank pattern in view: " ++ r)
+                          ((processExp "",) . processPat)
     -- View pattern
-    (l, [_, r]) -> (processExp bs $ concat l, processPat r)
+    (l, [_, r]) -> (processExp $ concat l, processPat r)
     -- Included so that Haskell doesn't warn about non-exhaustive patterns
     -- (even though the above are exhaustive in this context)
     _ -> undefined
@@ -194,40 +227,49 @@ makePat bs (cnt, pat, exs) = do
 -- Here's where the main meat of the template haskell is generated.  Given the
 -- number of captures, the pattern string, and a list of capture expressions,
 -- yields the template Haskell Exp which parses a string into a tuple.
-buildExp :: Bool -> Int -> String -> [Maybe Exp] -> ExpQ
-buildExp bs cnt pat xs = if bs
-  then [| let r = unsafePerformIO (regexFromTable $! $(table_bytes)) in 
-          liftM ( $(return maps) . padRight B.empty pad )
-        . (flip $ PCRE.match r) pcreExecOpts |]
-  else [| let r = unsafePerformIO (regexFromTable $! $(table_bytes)) in
-          liftM ( $(return maps) . padRight "" pad . map B.unpack )
-        . flip (PCRE.match r) pcreExecOpts . B.pack |]
-  where pad = cnt + 2
-        --TODO: make sure this takes advantage of bytestring fusion stuff - is
-        -- the right pack / unpack. Or use XOverloadedStrings
-        table_bytes = [| B.pack $(runIO table_string) |]
-        table_string = precompile (B.pack pat) pcreOpts >>= 
-          return . LitE . StringL . B.unpack . 
-          forceMaybeMsg "Error while getting PCRE compiled representation\n"
-        vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
-        maps = LamE [ListP . (WildP:) $ map VarP vs]
-                    (TupE . map (uncurry AppE)
-                    -- filter out all "Nothing" exprs
-                    . map (first fromJust) . filter (isJust . fst)
-                    -- [(Expr, Variable applied to)]
-                    . zip xs $ map VarE vs)
+buildExp :: Config -> Int -> String -> [Maybe Exp] -> ExpQ
+buildExp (bs, nc) cnt pat xs =
+  [| let r = $(get_regex) in
+     $(process) . (flip $ PCRE.match r) pcreExecOpts
+   . $(if bs then [| id |] else [| B.pack |]) |]
+ where
+  pad = cnt + 2
+
+  --TODO: make sure this takes advantage of bytestring fusion stuff - is
+  -- the right pack / unpack. Or use XOverloadedStrings
+  get_regex = if nc
+    then [| PCRE.compile (B.pack pat) pcreOpts|]
+    else [| unsafePerformIO (regexFromTable $! $(table_bytes)) |]
+  table_bytes = [| B.pack $(runIO table_string) |]
+  table_string = precompile (B.pack pat) pcreOpts >>= 
+    return . LitE . StringL . B.unpack . 
+    forceMaybeMsg "Error while getting PCRE compiled representation\n"
+
+  process = case (null vs, bs) of
+    (True, _)  -> [| liftM ( const () ) |]
+    (_, False) -> [| liftM (($(return maps)) . padRight "" pad . map B.unpack) |]
+    (_, True)  -> [| liftM (($(return maps)) . padRight B.empty pad) |]
+  maps = LamE [ListP . (WildP:) $ map VarP vs]
+       . TupE . map (uncurry AppE)
+       -- filter out all "Nothing" exprs
+       . map (first fromJust) . filter (isJust . fst)
+       -- [(Expr, Variable applied to)]
+       . zip xs $ map VarE vs
+  vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
 
 -- Parse a Haskell expression into a template Haskell Exp
-processExp :: Bool -> String -> Exp
-processExp bs xs = forceEitherMsg ("Error while parsing capture mapper `" ++ xs ++ "'")
-                 . parseExp $ onSpace "id" id xs
+processExp :: String -> Exp
+processExp xs
+  = forceEitherMsg ("Error while parsing capture mapper `" ++ xs ++ "'")
+  . parseExp $ onSpace xs "id" id
 
--- Parse a Haskell pattern match into a template Haskell Pat, yielding Nothing for
--- strings which just consist of whitespace.
+-- Parse a Haskell pattern match into a template Haskell Pat, yielding Nothing
+-- for patterns which consist of just whitespace.
 processPat :: String -> Maybe Pat
-processPat xs = onSpace Nothing
-  (Just . forceEitherMsg ("Error while parsing capture pattern `" ++ xs ++ "'")
-        . parsePat) xs
+processPat xs = onSpace xs Nothing
+  $ Just 
+  . forceEitherMsg ("Error while parsing capture pattern `" ++ xs ++ "'")
+  . parsePat
 
 -- Parsing
 -------------------------------------------------------------------------------
@@ -237,7 +279,8 @@ processPat xs = onSpace Nothing
 parseIt :: String -> ParseChunks
 parseIt xs = ( cnt, concat [x | Left x <- results]
              , [(i, x) | Right (i, x) <- results])
-  where (cnt, results) = parseRegex (filter (`notElem` "\r\n") xs) "" (-1)
+ where
+  (cnt, results) = parseRegex (filter (`notElem` "\r\n") xs) "" (-1)
 
 -- A pair of mutually-recursive functions, one for processing the quotation
 -- and the other for the anti-quotation.
@@ -280,8 +323,6 @@ parseHaskell inp s ix = case inp of
   (x:xs) -> parseHaskell xs (x:s) ix
   [] -> error "Regular-expression Haskell splice is never terminated with a trailing }"
 
--- TODO: provide bytestring variant.
-
 -- Utils
 -------------------------------------------------------------------------------
 
@@ -314,8 +355,8 @@ splitFromBack :: Int -> [a] -> ([a], [a])
 splitFromBack i xs = (reverse b, reverse a)
   where (a, b) = splitAt i $ reverse xs
 
-onSpace :: a -> (String -> a) -> String -> a
-onSpace x f s | all isSpace s = x
+onSpace :: String -> a -> (String -> a) -> a
+onSpace s x f | all isSpace s = x
               | otherwise = f s
 
 -- | Given a desired list-length, if the passed list is too short, it is padded

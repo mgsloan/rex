@@ -4,3 +4,4 @@
 0.2: Sep 24 2011
   * Fixed a bug where patterns with no captures would fail.
   * Decided to remove the defaulting to 'read' - too much magic.
+  * Added non-precompiling quasiquoters.

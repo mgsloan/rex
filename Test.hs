@@ -3,9 +3,9 @@
 module Test where
 
 import Text.Regex.PCRE.Rex
-import Data.Maybe (catMaybes)
 
--- main = interact (unlines . map (show . math) . lines)
+import qualified Data.ByteString.Char8 as B
+import Data.Maybe (catMaybes, isJust)
 
 math x = mathl x 0
 
@@ -44,3 +44,12 @@ disjunct [rex| ^(?:(?{nonNull $ Just . head -> a} .)
              | (?{nonNull $ Just . head -> b} ..)
              | (?{nonNull $ Just . last -> c} ...))$|] =
   head $ catMaybes [a, b, c]
+
+nocap = isJust $ [rex|jus \s nothin|] "jus nothin"
+nocapat [rex|jus \s nothin|] = "matched!"
+nocapat _ = "no match."
+
+-- Ensure that the other variants compile:
+nctest = [ncrex|(?{}hello)|] "hello" == Just "hello"
+btest = [brex|(?{}hello)|] (B.pack "hello") == Just (B.pack "hello")
+ncbtest = [ncbrex|(?{}hello)|] (B.pack "hello") == Just (B.pack "hello")
