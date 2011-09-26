@@ -6,3 +6,9 @@
   * Added non-precompiling quasiquoters.
   * Fixed a bug where patterns with no captures would fail.
   * Decided to remove the defaulting to 'read' - too much magic.
+
+0.3: Sep 25 2011
+  * Fixed a capture indexing bug, where capture fields which aren't bound would
+    cause subsequent bound captures to be incorrect.
+  * Above bug fix actually neatened up code.
+  * Added configuration of default mapping pattern.

@@ -1,5 +1,5 @@
 Name:                rex
-Version:             0.2
+Version:             0.3
 Synopsis:            A quasi-quoter for typeful results of regex captures.
 Description:         Provides a quasi-quoter for regular expressions which
                      yields a tuple, of appropriate arity and types,

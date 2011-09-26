@@ -23,7 +23,7 @@
 -- PCRE library and storing a ByteString literal representation of its state.
 --
 -- 5) Compile-time configurable to use different PCRE options, turn off
--- precompilation, or use ByteStrings.
+-- precompilation, use ByteStrings, or set a default mapping expression.
 --
 -- Since this is a quasiquoter library that generates code using view patterns,
 -- the following extensions are required:
@@ -116,10 +116,11 @@
 -- QuasiQuoter is provided for this purpose.  You can also define your own
 -- QuasiQuoter - the definitions of the default configurations are as follows:
 --
--- > rex  = rexConf False True rexPCREOpts rexPCREExecOpts
--- > brex = rexConf True  True rexPCREOpts rexPCREExecOpts
+-- > rex  = rexConf False True "id" rexPCREOpts rexPCREExecOpts
+-- > brex = rexConf True  True "id" rexPCREOpts rexPCREExecOpts
 --
--- As mentioned, the other Bool determines whether precompilation is used.
+-- As mentioned, the other Bool determines whether precompilation is used.  The
+-- string following is the default mapping expression, used when omitted.
 -- Due to GHC staging restrictions, your configuration will need to be in a
 -- different module than its usage.
 --
@@ -138,16 +139,15 @@ import qualified Text.Regex.PCRE.Light as PCRE
 import qualified Text.Regex.PCRE.Light.Base as PCRE
 import Text.Regex.PCRE.Precompile
 
-import Control.Arrow (first, second)
+import Control.Arrow (first)
 import Control.Monad (liftM)
 
 import qualified Data.ByteString.Char8 as B
 import Data.Either.Utils (forceEitherMsg)
-import Data.List (groupBy, sortBy)
+import Data.List (find)
 import Data.List.Split (split, onSublist)
 import Data.Maybe (catMaybes, listToMaybe, fromJust, isJust)
 import Data.Maybe.Utils (forceMaybeMsg)
-import Data.Ord (comparing)
 import Data.Char (isSpace)
 
 import Language.Haskell.TH
@@ -156,22 +156,27 @@ import Language.Haskell.Meta.Parse
 
 import System.IO.Unsafe (unsafePerformIO)
 
+import Debug.Trace
+
+debug x = trace (show x) x
+
 {- TODO:
   * Fix mentioned caveats
   * Target Text.Regex.Base ? 
   * Provide a variant which allows splicing in an expression that evaluates to
     regex string.
   * Add unit tests
+  * Consider allowing passing arity lists in to configuration
 -}
 
 type ParseChunk = Either String (Int, String)
 type ParseChunks = (Int, String, [(Int, String)])
-type Config = (Bool, Bool, [PCRE.PCREOption], [PCRE.PCREExecOption])
+type Config = (Bool, Bool, String, [PCRE.PCREOption], [PCRE.PCREExecOption])
 
 -- | Default regular expression quasiquoter for Strings, and ByteStrings.
 rex, brex :: QuasiQuoter
-rex  = rexConf False True rexPCREOpts rexPCREExecOpts
-brex = rexConf True  True rexPCREOpts rexPCREExecOpts
+rex  = rexConf False True "id" rexPCREOpts rexPCREExecOpts
+brex = rexConf True  True "id" rexPCREOpts rexPCREExecOpts
 
 
 rexPCREOpts :: [PCRE.PCREOption]
@@ -190,13 +195,14 @@ rexPCREExecOpts = []
 -- | A configureable regular-expression QuasiQuoter.  Takes the options to pass
 -- to the PCRE engine, along with Bools to flag ByteString usage and
 -- non-compilation respecively.
-rexConf :: Bool -> Bool -> [PCRE.PCREOption] -> [PCRE.PCREExecOption] -> QuasiQuoter
-rexConf bs pc os eos = QuasiQuoter
+rexConf :: Bool -> Bool -> String -> [PCRE.PCREOption] -> [PCRE.PCREExecOption]
+        -> QuasiQuoter
+rexConf bs pc d os eos = QuasiQuoter
         (makeExp conf . parseIt)
         (makePat conf . parseIt)
         undefined undefined
  where
-  conf = (bs, pc, [PCRE.combineOptions os], [PCRE.combineExecOptions eos])
+  conf = (bs, pc, d, [PCRE.combineOptions os], [PCRE.combineExecOptions eos])
 
 -- Template Haskell Code Generation
 -------------------------------------------------------------------------------
@@ -206,10 +212,9 @@ rexConf bs pc os eos = QuasiQuoter
 -- default for captures which lack a parser definition, and defaulting to making
 -- the parser that doesn't exist
 makeExp :: Config -> ParseChunks -> ExpQ
-makeExp conf (cnt, pat, exs) = buildExp conf cnt pat
-    . map (liftM processExp . snd . head)
-    . groupSortBy (comparing fst)
-    $ map (second Just) exs ++ [(i, Nothing) | i <- [0..cnt]]
+makeExp conf (cnt, pat, exs) = buildExp conf cnt pat exs'
+ where
+  exs' = map (\ix -> liftM (processExp conf . snd) $ find ((==ix).fst) exs) [0..cnt]
   
 -- Creates the template haskell Pat which corresponds to the parsed interpolated
 -- regex. As well as handling the aforementioned defaulting considerations, this
@@ -225,15 +230,14 @@ makePat conf (cnt, pat, exs) = do
          . map snd $ catMaybes views
  where
   views :: [Maybe (Exp, Pat)]
-  views = map (floatSnd . processView . snd . head)
-        . groupSortBy (comparing fst) $ exs
+  views = map (\ix -> liftM (processView . snd) $ find ((==ix).fst) exs) [0..cnt]
 
-  processView :: String -> (Exp, Maybe Pat)
+  processView :: String -> (Exp, Pat)
   processView xs = case splitFromBack 2 ((split . onSublist) "->" xs) of
     (_, [r]) -> onSpace r (error $ "blank pattern in view: " ++ r)
-                          ((processExp "",) . processPat)
+                          ((processExp conf "",) . processPat)
     -- View pattern
-    (l, [_, r]) -> (processExp $ concat l, processPat r)
+    (l, [_, r]) -> (processExp conf $ concat l, processPat r)
     -- Included so that Haskell doesn't warn about non-exhaustive patterns
     -- (even though the above are exhaustive in this context)
     _ -> undefined
@@ -242,13 +246,11 @@ makePat conf (cnt, pat, exs) = do
 -- number of captures, the pattern string, and a list of capture expressions,
 -- yields the template Haskell Exp which parses a string into a tuple.
 buildExp :: Config -> Int -> String -> [Maybe Exp] -> ExpQ
-buildExp (bs, nc, pcreOpts, pcreExecOpts) cnt pat xs =
+buildExp (bs, nc, _, pcreOpts, pcreExecOpts) cnt pat xs =
   [| let r = $(get_regex) in
      $(process) . (flip $ PCRE.match r) $(liftRS pcreExecOpts)
    . $(if bs then [| id |] else [| B.pack |]) |]
  where
-  pad = cnt + 2
-
   liftRS x = [| read shown |]
    where shown = show x
 
@@ -266,6 +268,7 @@ buildExp (bs, nc, pcreOpts, pcreExecOpts) cnt pat xs =
     (True, _)  -> [| liftM ( const () ) |]
     (_, False) -> [| liftM (($(return maps)) . padRight "" pad . map B.unpack) |]
     (_, True)  -> [| liftM (($(return maps)) . padRight B.empty pad) |]
+  pad = cnt + 2
   maps = LamE [ListP . (WildP:) $ map VarP vs]
        . TupE . map (uncurry AppE)
        -- filter out all "Nothing" exprs
@@ -275,18 +278,17 @@ buildExp (bs, nc, pcreOpts, pcreExecOpts) cnt pat xs =
   vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
 
 -- Parse a Haskell expression into a template Haskell Exp
-processExp :: String -> Exp
-processExp xs
+processExp :: Config -> String -> Exp
+processExp (_, _, d, _, _) xs
   = forceEitherMsg ("Error while parsing capture mapper `" ++ xs ++ "'")
-  . parseExp $ onSpace xs "id" id
+  . parseExp $ onSpace xs d id
 
 -- Parse a Haskell pattern match into a template Haskell Pat, yielding Nothing
 -- for patterns which consist of just whitespace.
-processPat :: String -> Maybe Pat
-processPat xs = onSpace xs Nothing
-  $ Just 
-  . forceEitherMsg ("Error while parsing capture pattern `" ++ xs ++ "'")
-  . parsePat
+processPat :: String -> Pat
+processPat xs
+  = forceEitherMsg ("Error while parsing capture pattern `" ++ xs ++ "'")
+  $ parsePat xs
 
 -- Parsing
 -------------------------------------------------------------------------------
@@ -297,7 +299,7 @@ parseIt :: String -> ParseChunks
 parseIt xs = ( cnt, concat [x | Left x <- results]
              , [(i, x) | Right (i, x) <- results])
  where
-  (cnt, results) = parseRegex (filter (`notElem` "\r\n") xs) "" (-1)
+  (cnt, results) = debug $ parseRegex (filter (`notElem` "\r\n") xs) "" (-1)
 
 -- A pair of mutually-recursive functions, one for processing the quotation
 -- and the other for the anti-quotation.
@@ -308,7 +310,7 @@ parseRegex :: String -> String -> Int -> (Int, [ParseChunk])
 parseRegex inp s ix = case inp of
   -- Disallow branch-reset capture.
   ('(':'?':'|':_) ->
-    error "Branch reset pattern (?| not allowed in fancy quasi-quoted regex."
+    error "Branch reset pattern (?| not allowed in quasi-quoted regex."
 
   -- Ignore non-capturing parens / handle backslash escaping.
   ('\\':'\\'  :xs) -> parseRegex xs ("\\\\" ++ s) ix
@@ -348,13 +350,6 @@ parseHaskell inp s ix = case inp of
 maybeRead :: (Read a) => String -> Maybe a
 maybeRead = fmap fst . listToMaybe . reads
 
--- TODO: allow for a bundle of parameters to be passed in at the beginning
--- of the quasiquote. Would also be a juncture for informing arity /
--- extension information.
-
-groupSortBy :: (a -> a -> Ordering) -> [a] -> [[a]]
-groupSortBy f = groupBy (\x -> (==EQ) . f x) . sortBy f
-
 splitFromBack :: Int -> [a] -> ([a], [a])
 splitFromBack i xs = (reverse b, reverse a)
   where (a, b) = splitAt i $ reverse xs
@@ -370,30 +365,5 @@ padRight _ 0 xs = xs
 padRight v i [] = replicate i v
 padRight v i (x:xs) = x : padRight v (i-1) xs
 
-mapLeft :: (a -> a') -> Either a b -> Either a' b
-mapLeft f = either (Left . f) Right
-
-mapSnd :: (b -> c) -> (a, b) -> (a, c)
+mapSnd :: (t -> t2) -> (t1, t) -> (t1, t2)
 mapSnd f (x, y) = (x, f y)
-
-floatSnd :: (Functor f) => (a, f b) -> f (a, b)
-floatSnd (x, y) = fmap (x,) y
-
-{- for completeness:
-
-mapRight :: (b -> b') -> Either a b -> Either a b'
-mapRight f = either Left (Right . f)
-
-mapFst :: (a -> c) -> (a, b) -> (c, b)
-mapFst f (x, y) = (f x, y)
-
-floatFst :: (Functor f) => (f a, b) -> f (a, b)
-floatFst (x, y) = fmap (,y) x
-
-floatBoth :: (Monad m) => (m a, m b) -> m (a, b)
-floatBoth (x, y) = do
-  x' <- x
-  y' <- y
-  return (x', y')
-
--}
