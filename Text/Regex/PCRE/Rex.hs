@@ -20,10 +20,10 @@
 -- 3) Allows for the inline interpolation of mapping functions :: String -> a.
 --
 -- 4) Precompiles the regular expression at compile time, by calling into the
--- PCRE library and storing a ByteString literal representation of its state.
+-- PCRE library and storing a 'B.ByteString' literal representation of its state.
 --
 -- 5) Compile-time configurable to use different PCRE options, turn off
--- precompilation, use ByteStrings, or set a default mapping expression.
+-- precompilation, use 'B.ByteString's, or set a default mapping expression.
 --
 -- Since this is a quasiquoter library that generates code using view patterns,
 -- the following extensions are required:
@@ -51,7 +51,7 @@
 -- The token \"(?{\" introduces a capture group which has a mapping applied to
 -- the -- result - in this case \"length . filter (=='S')\".  If the ?{ ... }
 -- are omitted, then the capture group is not taken as part of the results of
--- the match.  If the contents of the ?{ ... } is omitted, then "id" is assumed:
+-- the match.  If the contents of the ?{ ... } is omitted, then 'id' is assumed:
 --
 -- > parsePair :: String -> Maybe (String, String)
 -- > parsePair = [rex|^<\s* (?{ }[^\s,>]+) \s*,\s* (?{ }[^\s,>]+) \s*>$|]
@@ -106,18 +106,18 @@
 --
 -- Used to occur when evaluating in GHCi, due to a bug in the way precompilation
 -- worked.  If this happens, please report it, and as a temporary work around,
--- make your own quasiquoter using \"rexConf _ False _ _ _\" to disable
+-- make your own quasiquoter using \"'rexConf' _ False _ _ _\" to disable
 -- pre-compilation.
 --
 -- Since pcre-light is a wrapper over a C API, the most efficient interface is
 -- ByteStrings, as it does not natively speak Haskell lists.  The [rex| ... ]
 -- quasiquoter implicitely packs the input into a bystestring, and unpacks the
--- results to strings before providing them to your mappers.  The \"brex\"
--- QuasiQuoter is provided for this purpose.  You can also define your own
--- QuasiQuoter - the definitions of the default configurations are as follows:
+-- results to strings before providing them to your mappers.  The 'brex'
+-- 'QuasiQuoter' is provided for this purpose.  You can also define your own
+-- 'QuasiQuoter' - the definitions of the default configurations are as follows:
 --
--- > rex  = rexConf False True "id" rexPCREOpts []
--- > brex = rexConf True  True "id" rexPCREOpts []
+-- > rex  = rexConf False True "id" rexPCREOptions []
+-- > brex = rexConf True  True "id" rexPCREOptions []
 --
 -- As mentioned, the other Bool determines whether precompilation is used.  The
 -- string following is the default mapping expression, used when omitted.
@@ -133,7 +133,7 @@
 -----------------------------------------------------------------------------
 
 module Text.Regex.PCRE.Rex (
-  rex, brex, rexConf, rexPCREOpts,
+  rex, brex, rexConf, rexPCREOptions,
   maybeRead, padRight, makeQuasiMultiline) where
 
 import qualified Text.Regex.PCRE.Light as PCRE
@@ -170,15 +170,16 @@ type ParseChunk = Either String (Int, String)
 type ParseChunks = (Int, String, [(Int, String)])
 type Config = (Bool, Bool, String, [PCRE.PCREOption], [PCRE.PCREExecOption])
 
--- | Default regular expression quasiquoter for Strings, and ByteStrings.
+-- | Default regular expression quasiquoter for 'String's and 'B.ByteString's,
+-- respectively.
 rex, brex :: QuasiQuoter
-rex  = rexConf False True "id" rexPCREOpts []
-brex = rexConf True  True "id" rexPCREOpts []
+rex  = rexConf False True "id" rexPCREOptions []
+brex = rexConf True  True "id" rexPCREOptions []
 
--- | This is a QuasiQuoter transformer, which allows for a whitespace-sensitive
+-- | This is a 'QuasiQuoter' transformer, which allows for a whitespace-sensitive
 -- quasi-quoter to be broken over multiple lines.  The default 'rex' and
 -- 'brex' functions do not need this as they are already whitespace insensitive.
--- However, if you create your own configuration, which omits the 'extended'
+-- However, if you create your own configuration, which omits the 'PCRE.extended'
 -- parameter, then this could be useful. The leading space of each line is
 -- ignored, and all newlines removed.
 makeQuasiMultiline :: QuasiQuoter -> QuasiQuoter
@@ -187,16 +188,16 @@ makeQuasiMultiline (QuasiQuoter a b c d) =
  where
   pre = concat . (\(x:xs) -> x : map (dropWhile isSpace) xs) . lines
 
--- | Default compilation time PCRE options.  The default is 'extended', which
--- 'extended' causes whitespace to be nonsemantic, and ignores # comments.
-rexPCREOpts :: [PCRE.PCREOption]
-rexPCREOpts = [ PCRE.extended ]
+-- | Default compilation time PCRE options.  The default is 'PCRE.extended',
+-- which causes whitespace to be nonsemantic, and ignores # comments.
+rexPCREOptions :: [PCRE.PCREOption]
+rexPCREOptions = [ PCRE.extended ]
   -- , dotall, caseless, utf8
   -- , newline_any, PCRE.newline_crlf ]
 
 -- | A configureable regular-expression QuasiQuoter.  Takes the options to pass
--- to the PCRE engine, along with Bools to flag ByteString usage and
--- non-compilation respecively.  The provided String indicates which mapping
+-- to the PCRE engine, along with 'Bool's to flag 'B.ByteString' usage and
+-- non-compilation respecively.  The provided 'String' indicates which mapping
 -- function to use, when one is omitted - \"(?{} ...)\".
 rexConf :: Bool -> Bool -> String -> [PCRE.PCREOption] -> [PCRE.PCREExecOption]
         -> QuasiQuoter
@@ -343,13 +344,13 @@ parseHaskell inp s ix = case inp of
 
   -- Consume the antiquoute contents, appending to a reverse accumulator.
   (x:xs) -> parseHaskell xs (x:s) ix
-  [] -> error "Regular-expression Haskell splice is never terminated with a trailing }"
+  [] -> error "Rex haskell splice terminator, }, never found"
 
 -- Utils
 -------------------------------------------------------------------------------
 
--- | A possibly useful utility function - yields "Just x" when there is a valid
--- parse, and Nothing otherwise.
+-- | A possibly useful utility function - yields 'Just' x when there is a
+-- valid parse, and 'Nothing' otherwise.
 maybeRead :: (Read a) => String -> Maybe a
 maybeRead = fmap fst . listToMaybe . reads
 
