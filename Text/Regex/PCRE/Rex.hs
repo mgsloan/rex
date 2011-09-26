@@ -156,10 +156,6 @@ import Language.Haskell.Meta.Parse
 
 import System.IO.Unsafe (unsafePerformIO)
 
-import Debug.Trace
-
-debug x = trace (show x) x
-
 {- TODO:
   * Fix mentioned caveats
   * Target Text.Regex.Base ? 
@@ -299,7 +295,7 @@ parseIt :: String -> ParseChunks
 parseIt xs = ( cnt, concat [x | Left x <- results]
              , [(i, x) | Right (i, x) <- results])
  where
-  (cnt, results) = debug $ parseRegex (filter (`notElem` "\r\n") xs) "" (-1)
+  (cnt, results) = parseRegex (filter (`notElem` "\r\n") xs) "" (-1)
 
 -- A pair of mutually-recursive functions, one for processing the quotation
 -- and the other for the anti-quotation.
