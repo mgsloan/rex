@@ -196,7 +196,8 @@ rexPCREOpts = [ PCRE.extended ]
 
 -- | A configureable regular-expression QuasiQuoter.  Takes the options to pass
 -- to the PCRE engine, along with Bools to flag ByteString usage and
--- non-compilation respecively.  The String indicates which 
+-- non-compilation respecively.  The provided String indicates which mapping
+-- function to use, when one is omitted - \"(?{} ...)\".
 rexConf :: Bool -> Bool -> String -> [PCRE.PCREOption] -> [PCRE.PCREExecOption]
         -> QuasiQuoter
 rexConf bs pc d os eos = QuasiQuoter
