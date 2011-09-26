@@ -53,8 +53,8 @@
 -- are omitted, then the capture group is not taken as part of the results of
 -- the match.  If the contents of the ?{ ... } is omitted, then "id" is assumed:
 --
--- parsePair :: String -> Maybe (String, String)
--- parsePair = [rex|^<\s* (?{ }[^\s,>]+) \s*,\s* (?{ }[^\s,>]+) \s*>$|]
+-- > parsePair :: String -> Maybe (String, String)
+-- > parsePair = [rex|^<\s* (?{ }[^\s,>]+) \s*,\s* (?{ }[^\s,>]+) \s*>$|]
 --
 -- The following example is derived from
 -- http://www.regular-expressions.info/dates.html
@@ -106,7 +106,7 @@
 --
 -- Used to occur when evaluating in GHCi, due to a bug in the way precompilation
 -- worked.  If this happens, please report it, and as a temporary work around,
--- make your own quasiquoter using \"rexConf _ False _ _\" to disable
+-- make your own quasiquoter using \"rexConf _ False _ _ _\" to disable
 -- pre-compilation.
 --
 -- Since pcre-light is a wrapper over a C API, the most efficient interface is
@@ -116,15 +116,15 @@
 -- QuasiQuoter is provided for this purpose.  You can also define your own
 -- QuasiQuoter - the definitions of the default configurations are as follows:
 --
--- > rex  = rexConf False True "id" rexPCREOpts rexPCREExecOpts
--- > brex = rexConf True  True "id" rexPCREOpts rexPCREExecOpts
+-- > rex  = rexConf False True "id" rexPCREOpts []
+-- > brex = rexConf True  True "id" rexPCREOpts []
 --
 -- As mentioned, the other Bool determines whether precompilation is used.  The
 -- string following is the default mapping expression, used when omitted.
 -- Due to GHC staging restrictions, your configuration will need to be in a
 -- different module than its usage.
 --
--- Inspired by / copy-modified from Matt Morrow's regexqq package:
+-- Inspired by Matt Morrow's regexqq package:
 -- <http://hackage.haskell.org/packages/archive/regexqq/latest/doc/html/src/Text-Regex-PCRE-QQ.html>
 --
 -- And code from Erik Charlebois's interpolatedstring-qq package:
@@ -133,7 +133,8 @@
 -----------------------------------------------------------------------------
 
 module Text.Regex.PCRE.Rex (
-  rex, brex, maybeRead, padRight, rexConf, rexPCREOpts, rexPCREExecOpts) where
+  rex, brex, rexConf, rexPCREOpts,
+  maybeRead, padRight, makeQuasiMultiline) where
 
 import qualified Text.Regex.PCRE.Light as PCRE
 import qualified Text.Regex.PCRE.Light.Base as PCRE
@@ -171,26 +172,31 @@ type Config = (Bool, Bool, String, [PCRE.PCREOption], [PCRE.PCREExecOption])
 
 -- | Default regular expression quasiquoter for Strings, and ByteStrings.
 rex, brex :: QuasiQuoter
-rex  = rexConf False True "id" rexPCREOpts rexPCREExecOpts
-brex = rexConf True  True "id" rexPCREOpts rexPCREExecOpts
+rex  = rexConf False True "id" rexPCREOpts []
+brex = rexConf True  True "id" rexPCREOpts []
 
+-- | This is a QuasiQuoter transformer, which allows for a whitespace-sensitive
+-- quasi-quoter to be broken over multiple lines.  The default 'rex' and
+-- 'brex' functions do not need this as they are already whitespace insensitive.
+-- However, if you create your own configuration, which omits the 'extended'
+-- parameter, then this could be useful. The leading space of each line is
+-- ignored, and all newlines removed.
+makeQuasiMultiline :: QuasiQuoter -> QuasiQuoter
+makeQuasiMultiline (QuasiQuoter a b c d) =
+  QuasiQuoter (a . pre) (b . pre) (c . pre) (d . pre)
+ where
+  pre = concat . (\(x:xs) -> x : map (dropWhile isSpace) xs) . lines
 
+-- | Default compilation time PCRE options.  The default is 'extended', which
+-- 'extended' causes whitespace to be nonsemantic, and ignores # comments.
 rexPCREOpts :: [PCRE.PCREOption]
-rexPCREOpts =
-  [ PCRE.extended
-  , PCRE.multiline ]
+rexPCREOpts = [ PCRE.extended ]
   -- , dotall, caseless, utf8
   -- , newline_any, PCRE.newline_crlf ]
 
-rexPCREExecOpts :: [PCRE.PCREExecOption]
-rexPCREExecOpts = []
-  -- [ PCRE.exec_newline_crlf
-  -- , exec_newline_any, PCRE.exec_notempty
-  -- , PCRE.exec_notbol, PCRE.exec_noteol ]
-
 -- | A configureable regular-expression QuasiQuoter.  Takes the options to pass
 -- to the PCRE engine, along with Bools to flag ByteString usage and
--- non-compilation respecively.
+-- non-compilation respecively.  The String indicates which 
 rexConf :: Bool -> Bool -> String -> [PCRE.PCREOption] -> [PCRE.PCREExecOption]
         -> QuasiQuoter
 rexConf bs pc d os eos = QuasiQuoter

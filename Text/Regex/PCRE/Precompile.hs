@@ -32,6 +32,8 @@ import Foreign.C.Types (CInt)
 import Text.Regex.PCRE.Light
 import Text.Regex.PCRE.Light.Base
 
+-- | A type synonym indicating which ByteStrings represent PCRE-format compiled
+-- data.
 type CompiledBytes = B.ByteString
 
 -- | Compiles the given regular expression, and assuming nothing bad
