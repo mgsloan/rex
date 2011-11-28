@@ -22,6 +22,9 @@
 -- 4) Precompiles the regular expression at compile time, by calling into the
 -- PCRE library and storing a 'B.ByteString' literal representation of its state.
 --
+-- NOTE: for some unknown reason this feature is currently broken, and so off by
+-- default.
+--
 -- 5) Compile-time configurable to use different PCRE options, turn off
 -- precompilation, use 'B.ByteString's, or set a default mapping expression.
 --
@@ -100,14 +103,11 @@
 -- general logic for this is a bit complicated, and postponed for a later
 -- release.
 -- 
--- 3) While this error is believed to no longer exist, the following error
+-- 3) The following error currently sometimes happens when using precompiled
+--    regular expressions.  This 'feature' is now off by default until this is
+--    fixed.
 -- 
 -- >  <interactive>: out of memory (requested 17584491593728 bytes)
---
--- Used to occur when evaluating in GHCi, due to a bug in the way precompilation
--- worked.  If this happens, please report it, and as a temporary work around,
--- make your own quasiquoter using \"'rexConf' _ False _ _ _\" to disable
--- pre-compilation.
 --
 -- Since pcre-light is a wrapper over a C API, the most efficient interface is
 -- ByteStrings, as it does not natively speak Haskell lists.  The [rex| ... ]
@@ -173,8 +173,8 @@ type Config = (Bool, Bool, String, [PCRE.PCREOption], [PCRE.PCREExecOption])
 -- | Default regular expression quasiquoter for 'String's and 'B.ByteString's,
 -- respectively.
 rex, brex :: QuasiQuoter
-rex  = rexConf False True "id" rexPCREOptions []
-brex = rexConf True  True "id" rexPCREOptions []
+rex  = rexConf False False "id" rexPCREOptions []
+brex = rexConf True  False "id" rexPCREOptions []
 
 -- | This is a 'QuasiQuoter' transformer, which allows for a whitespace-sensitive
 -- quasi-quoter to be broken over multiple lines.  The default 'rex' and
@@ -365,7 +365,7 @@ onSpace s x f | all isSpace s = x
 -- | Given a desired list-length, if the passed list is too short, it is padded
 -- with the given element.  Otherwise, it trims.
 padRight :: a -> Int -> [a] -> [a]
-padRight _ 0 xs = xs
+padRight _ 0 _ = []
 padRight v i [] = replicate i v
 padRight v i (x:xs) = x : padRight v (i-1) xs
 

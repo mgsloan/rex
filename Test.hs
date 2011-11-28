@@ -7,6 +7,23 @@ import Text.Regex.PCRE.Rex
 import qualified Data.ByteString.Char8 as B
 import Data.Maybe (catMaybes, isJust)
 
+main =
+  do demonstrate "math"      math      "1 + 3"
+     demonstrate "math"      math      "3 * 2 + 100"
+     demonstrate "math"      math      "20 / 3 + 100 * 2"
+     demonstrate "peano"     peano     "S Z"
+     demonstrate "peano"     peano     "S S S S Z"
+     demonstrate "peano"     peano     "S(S(S(S(Z))))"
+     demonstrate "parsePair" parsePair "<-1, 3>"
+     demonstrate "parsePair" parsePair "<-4,30>"
+     demonstrate "parsePair" parsePair "< 4,  -30 >"
+     demonstrate "parseDate" parseDate "1993.8.10"
+     demonstrate "parseDate" parseDate "1993.08.10"
+     demonstrate "parseDate" parseDate "2003.02.28"
+     demonstrate "parseDate" parseDate "2003.02.27"
+
+demonstrate n f input = print $ n ++ " \"" ++ input ++ "\" == " ++ show (f input)
+
 math x = mathl x 0
 
 mathl [] x = x
