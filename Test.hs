@@ -27,7 +27,7 @@ demo =
      demonstrate "disjunct"  disjunct  "abc"
      print $ "btest: " ++ show btest
 
-demonstrate n f input = print $ n ++ " \"" ++ input ++ "\" == " ++ show (f input)
+demonstrate n f input = putStrLn $ n ++ " \"" ++ input ++ "\" == " ++ show (f input)
 
 math x = mathl x 0
 
