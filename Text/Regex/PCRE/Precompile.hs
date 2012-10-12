@@ -18,33 +18,27 @@
 
 module Text.Regex.PCRE.Precompile where
 
-import Control.Monad (liftM)
-
-import qualified Data.ByteString.Char8 as B
+import Control.Monad          (liftM)
+import Data.ByteString.Char8  (ByteString)
 import Data.ByteString.Unsafe (unsafePackCStringLen, unsafeUseAsCString)
-
-import Foreign.ForeignPtr (withForeignPtr, newForeignPtr_)
-import Foreign.Ptr (nullPtr, castPtr)
-import Foreign.Marshal (alloca)
-import Foreign.Storable (peek)
-import Foreign.C.Types (CInt)
-
+import Foreign.ForeignPtr     (withForeignPtr, newForeignPtr_)
+import Foreign.Ptr            (nullPtr, castPtr)
+import Foreign.Marshal        (alloca)
+import Foreign.Storable       (peek)
+import Foreign.C.Types        (CInt)
 import Text.Regex.PCRE.Light
 import Text.Regex.PCRE.Light.Base
 
-import Debug.Trace
+-- | A synonym indicating which ByteStrings represent PCRE-format compiled data.
+type CompiledBytes = ByteString
 
--- | A type synonym indicating which ByteStrings represent PCRE-format compiled
--- data.
-type CompiledBytes = B.ByteString
-
--- | Compiles the given regular expression, and assuming nothing bad
--- happens, yields the bytestring filled with PCRE's compiled
--- representation.
-precompile :: B.ByteString -> [PCREOption] -> IO (Maybe CompiledBytes)
+-- | Compiles the given regular expression, and assuming nothing bad happens,
+-- yields the bytestring filled with PCRE's compiled representation.
+precompile :: ByteString -> [PCREOption] -> IO (Maybe CompiledBytes)
 precompile pat opts = regexToTable $ compile pat opts
 
--- | Takes a compiled regular expression, and yields .
+-- | Takes a compiled regular expression, and if successful, yields the
+-- compiled representation.
 regexToTable :: Regex -> IO (Maybe CompiledBytes)
 regexToTable (Regex p _) =
   withForeignPtr p $ \pcre -> alloca $ \res -> do

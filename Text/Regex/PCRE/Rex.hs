@@ -20,13 +20,13 @@
 -- 3) Allows for the inline interpolation of mapping functions :: String -> a.
 --
 -- 4) Precompiles the regular expression at compile time, by calling into the
--- PCRE library and storing a 'B.ByteString' literal representation of its state.
+-- PCRE library and storing a 'ByteString' literal representation of its state.
 --
 -- NOTE: for some unknown reason this feature is currently broken, and so off by
 -- default.
 --
 -- 5) Compile-time configurable to use different PCRE options, turn off
--- precompilation, use 'B.ByteString's, or set a default mapping expression.
+-- precompilation, use 'ByteString's, or set a default mapping expression.
 --
 -- Since this is a quasiquoter library that generates code using view patterns,
 -- the following extensions are required:
@@ -134,28 +134,26 @@
 
 module Text.Regex.PCRE.Rex (
   rex, brex, rexConf, rexPCREOptions,
-  maybeRead, padRight, makeQuasiMultiline) where
+  maybeRead, makeQuasiMultiline) where
 
-import qualified Text.Regex.PCRE.Light as PCRE
-import qualified Text.Regex.PCRE.Light.Base as PCRE
 import Text.Regex.PCRE.Precompile
 
-import Control.Arrow (first)
-import Control.Monad (liftM)
+import qualified Text.Regex.PCRE.Light      as PCRE
+import qualified Text.Regex.PCRE.Light.Base as PCRE
 
-import qualified Data.ByteString.Char8 as B
-import Data.Either.Utils (forceEitherMsg)
-import Data.List (find)
-import Data.List.Split (split, onSublist)
-import Data.Maybe (catMaybes, listToMaybe, fromJust, isJust)
-import Data.Maybe.Utils (forceMaybeMsg)
-import Data.Char (isSpace)
+import Control.Applicative   ( (<$>) )
+import Control.Arrow         ( first )
+import Control.Monad         ( liftM )
+import Data.ByteString.Char8 ( pack, unpack, empty )
+import Data.List             ( find )
+import Data.List.Split       ( split, onSublist )
+import Data.Maybe            ( catMaybes, listToMaybe, fromJust, isJust )
+import Data.Char             ( isSpace )
+import System.IO.Unsafe      ( unsafePerformIO )
 
 import Language.Haskell.TH
 import Language.Haskell.TH.Quote
 import Language.Haskell.Meta.Parse
-
-import System.IO.Unsafe (unsafePerformIO)
 
 {- TODO:
   * Fix mentioned caveats
@@ -170,7 +168,7 @@ type ParseChunk = Either String (Int, String)
 type ParseChunks = (Int, String, [(Int, String)])
 type Config = (Bool, Bool, String, [PCRE.PCREOption], [PCRE.PCREExecOption])
 
--- | Default regular expression quasiquoter for 'String's and 'B.ByteString's,
+-- | Default regular expression quasiquoter for 'String's and 'ByteString's,
 -- respectively.
 rex, brex :: QuasiQuoter
 rex  = rexConf False False "id" rexPCREOptions []
@@ -183,8 +181,8 @@ brex = rexConf True  False "id" rexPCREOptions []
 -- parameter, then this could be useful. The leading space of each line is
 -- ignored, and all newlines removed.
 makeQuasiMultiline :: QuasiQuoter -> QuasiQuoter
-makeQuasiMultiline (QuasiQuoter a b c d) =
-  QuasiQuoter (a . pre) (b . pre) (c . pre) (d . pre)
+makeQuasiMultiline (QuasiQuoter a b c d)
+  = QuasiQuoter (a . pre) (b . pre) (c . pre) (d . pre)
  where
   pre = concat . (\(x:xs) -> x : map (dropWhile isSpace) xs) . lines
 
@@ -196,15 +194,17 @@ rexPCREOptions = [ PCRE.extended ]
   -- , newline_any, PCRE.newline_crlf ]
 
 -- | A configureable regular-expression QuasiQuoter.  Takes the options to pass
--- to the PCRE engine, along with 'Bool's to flag 'B.ByteString' usage and
+-- to the PCRE engine, along with 'Bool's to flag 'ByteString' usage and
 -- non-compilation respecively.  The provided 'String' indicates which mapping
 -- function to use, when one is omitted - \"(?{} ...)\".
 rexConf :: Bool -> Bool -> String -> [PCRE.PCREOption] -> [PCRE.PCREExecOption]
         -> QuasiQuoter
-rexConf bs pc d os eos = QuasiQuoter
-        (makeExp conf . parseIt)
-        (makePat conf . parseIt)
-        undefined undefined
+rexConf bs pc d os eos
+  = QuasiQuoter
+      (makeExp conf . parseIt)
+      (makePat conf . parseIt)
+      undefined
+      undefined
  where
   conf = (bs, pc, d, [PCRE.combineOptions os], [PCRE.combineExecOptions eos])
 
@@ -218,7 +218,7 @@ rexConf bs pc d os eos = QuasiQuoter
 makeExp :: Config -> ParseChunks -> ExpQ
 makeExp conf (cnt, pat, exs) = buildExp conf cnt pat exs'
  where
-  exs' = map (\ix -> liftM (processExp conf . snd) $ find ((==ix).fst) exs) [0..cnt]
+  exs' = map (\ix -> liftM (processExp conf . snd) $ find ((==ix) . fst) exs) [0..cnt]
   
 -- Creates the template haskell Pat which corresponds to the parsed interpolated
 -- regex. As well as handling the aforementioned defaulting considerations, this
@@ -253,25 +253,24 @@ buildExp :: Config -> Int -> String -> [Maybe Exp] -> ExpQ
 buildExp (bs, nc, _, pcreOpts, pcreExecOpts) cnt pat xs =
   [| let r = $(get_regex) in
      $(process) . (flip $ PCRE.match r) $(liftRS pcreExecOpts)
-   . $(if bs then [| id |] else [| B.pack |]) |]
+   . $(if bs then [| id |] else [| pack |]) |]
  where
-  liftRS x = [| read shown |]
-   where shown = show x
+  liftRS x = [| read shown |] where shown = show x
 
   --TODO: make sure this takes advantage of bytestring fusion stuff - is
   -- the right pack / unpack. Or use XOverloadedStrings
-  get_regex = if nc
-    then [| unsafePerformIO (regexFromTable $! $(table_bytes)) |]
-    else [| PCRE.compile (B.pack pat) $(liftRS pcreOpts)|]
-  table_bytes = [| B.pack $(runIO table_string) |]
-  table_string = precompile (B.pack pat) pcreOpts >>= 
-    return . LitE . StringL . B.unpack . 
-    forceMaybeMsg "Error while getting PCRE compiled representation\n"
-
+  get_regex 
+    | nc = [| unsafePerformIO (regexFromTable $! $(table_bytes)) |]
+    | otherwise = [| PCRE.compile (pack pat) $(liftRS pcreOpts) |]
+  table_bytes = [| pack $(LitE . StringL . unpack <$> runIO table_string) |]
+  table_string
+     = forceMaybeMsg "Error while getting PCRE compiled representation\n"
+   <$> precompile (pack pat) pcreOpts
+      
   process = case (null vs, bs) of
     (True, _)  -> [| liftM ( const () ) |]
-    (_, False) -> [| liftM (($(return maps)) . padRight "" pad . map B.unpack) |]
-    (_, True)  -> [| liftM (($(return maps)) . padRight B.empty pad) |]
+    (_, False) -> [| liftM (($(return maps)) . padRight "" pad . map unpack) |]
+    (_, True)  -> [| liftM (($(return maps)) . padRight empty pad) |]
   pad = cnt + 2
   maps = LamE [ListP . (WildP:) $ map VarP vs]
        . TupE . map (uncurry AppE)
@@ -371,3 +370,16 @@ padRight v i (x:xs) = x : padRight v (i-1) xs
 
 mapSnd :: (t -> t2) -> (t1, t) -> (t1, t2)
 mapSnd f (x, y) = (x, f y)
+
+-- From MissingH
+
+{- | Like 'forceMaybe', but lets you customize the error message raised if
+Nothing is supplied. -}
+forceMaybeMsg :: String -> Maybe a -> a
+forceMaybeMsg msg Nothing = error msg
+forceMaybeMsg _ (Just x) = x
+
+{- | Like 'forceEither', but can raise a specific message with the error. -}
+forceEitherMsg :: Show e => String -> Either e a -> a
+forceEitherMsg msg (Left x) = error $ msg ++ ": " ++ show x
+forceEitherMsg _ (Right x) = x
