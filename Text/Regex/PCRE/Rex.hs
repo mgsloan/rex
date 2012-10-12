@@ -116,8 +116,10 @@
 -- 'QuasiQuoter' is provided for this purpose.  You can also define your own
 -- 'QuasiQuoter' - the definitions of the default configurations are as follows:
 --
--- > rex  = rexConf False True "id" rexPCREOptions []
--- > brex = rexConf True  True "id" rexPCREOptions []
+-- > rex  = rexWithConf $ defaultRexConf
+-- > brex = rexWithConf $ defaultRexConf { rexByteString = True } 
+-- >
+-- > defaultRexConf = RexConf False False "id" [PCRE.extended] []
 --
 -- As mentioned, the other Bool determines whether precompilation is used.  The
 -- string following is the default mapping expression, used when omitted.
@@ -132,14 +134,21 @@
 --
 -----------------------------------------------------------------------------
 
-module Text.Regex.PCRE.Rex (
-  rex, brex, rexConf, rexPCREOptions,
-  maybeRead, makeQuasiMultiline) where
+module Text.Regex.PCRE.Rex
+  (
+  -- * Quasiquoters
+    rex, brex
+  -- * Configurable QuasiQuoter
+  , rexWithConf, RexConf(..), defaultRexConf
+  -- * Utility
+  , makeQuasiMultiline
+  -- * Used by Generated Code
+  , maybeRead, padRight
+  ) where
 
 import Text.Regex.PCRE.Precompile
 
-import qualified Text.Regex.PCRE.Light      as PCRE
-import qualified Text.Regex.PCRE.Light.Base as PCRE
+import qualified Text.Regex.PCRE.Light as PCRE
 
 import Control.Applicative   ( (<$>) )
 import Control.Arrow         ( first )
@@ -156,6 +165,7 @@ import Language.Haskell.TH.Quote
 import Language.Haskell.Meta.Parse
 
 {- TODO:
+  * Benchmark
   * Fix mentioned caveats
   * Target Text.Regex.Base ? 
   * Provide a variant which allows splicing in an expression that evaluates to
@@ -164,15 +174,19 @@ import Language.Haskell.Meta.Parse
   * Consider allowing passing arity lists in to configuration
 -}
 
-type ParseChunk = Either String (Int, String)
-type ParseChunks = (Int, String, [(Int, String)])
-type Config = (Bool, Bool, String, [PCRE.PCREOption], [PCRE.PCREExecOption])
+data RexConf = RexConf
+  { rexByteString :: Bool
+  , rexCompiled :: Bool
+  , rexView :: String 
+  , rexPCREOpts :: [PCRE.PCREOption]
+  , rexPCREExecOpts :: [PCRE.PCREExecOption]
+  }
 
 -- | Default regular expression quasiquoter for 'String's and 'ByteString's,
 -- respectively.
 rex, brex :: QuasiQuoter
-rex  = rexConf False False "id" rexPCREOptions []
-brex = rexConf True  False "id" rexPCREOptions []
+rex  = rexWithConf $ defaultRexConf
+brex = rexWithConf $ defaultRexConf { rexByteString = True }
 
 -- | This is a 'QuasiQuoter' transformer, which allows for a whitespace-sensitive
 -- quasi-quoter to be broken over multiple lines.  The default 'rex' and
@@ -186,27 +200,23 @@ makeQuasiMultiline (QuasiQuoter a b c d)
  where
   pre = concat . (\(x:xs) -> x : map (dropWhile isSpace) xs) . lines
 
--- | Default compilation time PCRE options.  The default is 'PCRE.extended',
--- which causes whitespace to be nonsemantic, and ignores # comments.
-rexPCREOptions :: [PCRE.PCREOption]
-rexPCREOptions = [ PCRE.extended ]
-  -- , dotall, caseless, utf8
-  -- , newline_any, PCRE.newline_crlf ]
+-- | Default rex configuration, which specifies that the regexes operate on
+-- strings, don't postprocess the matched patterns, and use 'PCRE.extended'.
+-- This setting causes whitespace to be nonsemantic, and ignores # comments.
+defaultRexConf :: RexConf
+defaultRexConf = RexConf False False "id" [PCRE.extended] []
 
 -- | A configureable regular-expression QuasiQuoter.  Takes the options to pass
 -- to the PCRE engine, along with 'Bool's to flag 'ByteString' usage and
 -- non-compilation respecively.  The provided 'String' indicates which mapping
 -- function to use, when one is omitted - \"(?{} ...)\".
-rexConf :: Bool -> Bool -> String -> [PCRE.PCREOption] -> [PCRE.PCREExecOption]
-        -> QuasiQuoter
-rexConf bs pc d os eos
+rexWithConf :: RexConf -> QuasiQuoter
+rexWithConf conf
   = QuasiQuoter
       (makeExp conf . parseIt)
       (makePat conf . parseIt)
       undefined
       undefined
- where
-  conf = (bs, pc, d, [PCRE.combineOptions os], [PCRE.combineExecOptions eos])
 
 -- Template Haskell Code Generation
 -------------------------------------------------------------------------------
@@ -215,7 +225,7 @@ rexConf bs pc d os eos
 -- regex.  This particular code mainly just handles making "read" the
 -- default for captures which lack a parser definition, and defaulting to making
 -- the parser that doesn't exist
-makeExp :: Config -> ParseChunks -> ExpQ
+makeExp :: RexConf -> ParseChunks -> ExpQ
 makeExp conf (cnt, pat, exs) = buildExp conf cnt pat exs'
  where
   exs' = map (\ix -> liftM (processExp conf . snd) $ find ((==ix) . fst) exs) [0..cnt]
@@ -226,7 +236,7 @@ makeExp conf (cnt, pat, exs) = buildExp conf cnt pat exs'
 -- 
 -- E.g. [reg| ... (?{e1 -> v1} ...) ... (?{e2 -> v2} ...) ... |] becomes
 --      [reg| ... (?{e1} ...) ... (?{e2} ...) ... |] -> (v1, v2)
-makePat :: Config -> ParseChunks -> PatQ
+makePat :: RexConf -> ParseChunks -> PatQ
 makePat conf (cnt, pat, exs) = do
   viewExp <- buildExp conf cnt pat $ map (liftM fst) views
   return . ViewP viewExp
@@ -249,28 +259,29 @@ makePat conf (cnt, pat, exs) = do
 -- Here's where the main meat of the template haskell is generated.  Given the
 -- number of captures, the pattern string, and a list of capture expressions,
 -- yields the template Haskell Exp which parses a string into a tuple.
-buildExp :: Config -> Int -> String -> [Maybe Exp] -> ExpQ
-buildExp (bs, nc, _, pcreOpts, pcreExecOpts) cnt pat xs =
+buildExp :: RexConf -> Int -> String -> [Maybe Exp] -> ExpQ
+buildExp conf cnt pat xs =
   [| let r = $(get_regex) in
-     $(process) . (flip $ PCRE.match r) $(liftRS pcreExecOpts)
-   . $(if bs then [| id |] else [| pack |]) |]
+     $(process) . (flip $ PCRE.match r) $(liftRS $ rexPCREExecOpts conf)
+   . $(if rexByteString conf then [| id |] else [| pack |]) |]
  where
   liftRS x = [| read shown |] where shown = show x
 
   --TODO: make sure this takes advantage of bytestring fusion stuff - is
   -- the right pack / unpack. Or use XOverloadedStrings
   get_regex 
-    | nc = [| unsafePerformIO (regexFromTable $! $(table_bytes)) |]
+    | rexCompiled conf = [| unsafePerformIO (regexFromTable $! $(table_bytes)) |]
     | otherwise = [| PCRE.compile (pack pat) $(liftRS pcreOpts) |]
   table_bytes = [| pack $(LitE . StringL . unpack <$> runIO table_string) |]
   table_string
      = forceMaybeMsg "Error while getting PCRE compiled representation\n"
    <$> precompile (pack pat) pcreOpts
-      
-  process = case (null vs, bs) of
+  pcreOpts = rexPCREOpts conf
+
+  process = case (null vs, rexByteString conf) of
     (True, _)  -> [| liftM ( const () ) |]
-    (_, False) -> [| liftM (($(return maps)) . padRight "" pad . map unpack) |]
-    (_, True)  -> [| liftM (($(return maps)) . padRight empty pad) |]
+    (_, False) -> [| liftM ($(return maps) . padRight "" pad . map unpack) |]
+    (_, True)  -> [| liftM ($(return maps) . padRight empty pad) |]
   pad = cnt + 2
   maps = LamE [ListP . (WildP:) $ map VarP vs]
        . TupE . map (uncurry AppE)
@@ -281,10 +292,10 @@ buildExp (bs, nc, _, pcreOpts, pcreExecOpts) cnt pat xs =
   vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
 
 -- Parse a Haskell expression into a template Haskell Exp
-processExp :: Config -> String -> Exp
-processExp (_, _, d, _, _) xs
+processExp :: RexConf -> String -> Exp
+processExp conf xs
   = forceEitherMsg ("Error while parsing capture mapper `" ++ xs ++ "'")
-  . parseExp $ onSpace xs d id
+  . parseExp $ onSpace xs (rexView conf) id
 
 -- Parse a Haskell pattern match into a template Haskell Pat, yielding Nothing
 -- for patterns which consist of just whitespace.
@@ -295,6 +306,9 @@ processPat xs
 
 -- Parsing
 -------------------------------------------------------------------------------
+
+type ParseChunk = Either String (Int, String)
+type ParseChunks = (Int, String, [(Int, String)])
 
 -- Postprocesses the results of the chunk-wise parse output, into the pattern to
 -- be pased to the regex engine, and the interpolated 
