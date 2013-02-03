@@ -25,7 +25,7 @@ import Foreign.ForeignPtr     (withForeignPtr, newForeignPtr_)
 import Foreign.Ptr            (nullPtr, castPtr)
 import Foreign.Marshal        (alloca)
 import Foreign.Storable       (peek)
-import Foreign.C.Types        (CInt)
+import Foreign.C.Types        (CSize)
 import Text.Regex.PCRE.Light
 import Text.Regex.PCRE.Light.Base
 
@@ -43,7 +43,7 @@ regexToTable :: Regex -> IO (Maybe CompiledBytes)
 regexToTable (Regex p _) =
   withForeignPtr p $ \pcre -> alloca $ \res -> do
     success <- c_pcre_fullinfo pcre nullPtr info_size res
-    len <- return . fromIntegral =<< (peek res :: IO CInt)
+    len <- return . fromIntegral =<< (peek res :: IO CSize)
     if success >= 0 
       then withForeignPtr p (liftM Just . unsafePackCStringLen . (, len) . castPtr)
       else return Nothing
