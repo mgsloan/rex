@@ -1,4 +1,3 @@
-{-# LANGUAGE TupleSections #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -19,8 +18,8 @@
 module Text.Regex.PCRE.Precompile where
 
 import Control.Monad          (liftM)
-import Data.ByteString.Char8  (ByteString)
-import Data.ByteString.Unsafe (unsafePackCStringLen, unsafeUseAsCString)
+import Data.ByteString.Char8  (ByteString, packCStringLen)
+import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Foreign.ForeignPtr     (withForeignPtr, newForeignPtr_)
 import Foreign.Ptr            (nullPtr, castPtr)
 import Foreign.Marshal        (alloca)
@@ -45,7 +44,7 @@ regexToTable (Regex p _) =
     success <- c_pcre_fullinfo pcre nullPtr info_size res
     len <- return . fromIntegral =<< (peek res :: IO CInt)
     if success >= 0 
-      then withForeignPtr p (liftM Just . unsafePackCStringLen . (, len) . castPtr)
+      then liftM Just $ packCStringLen (castPtr pcre, len)
       else return Nothing
 
 -- | Creates a regular expression from the compiled representation.
