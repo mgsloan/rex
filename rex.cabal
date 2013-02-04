@@ -18,8 +18,9 @@ Copyright:           Michael Sloan 2011
 Category:            Control
 Build-type:          Simple
 Stability:           experimental
-Extra-source-files:  Test.hs, Bench.hs
+Extra-source-files:  Demo.hs, Bench.hs
 Data-files:          README.md
+                     CHANGES.md
 Cabal-version:       >=1.6
 Bug-Reports:         http://github.com/mgsloan/rex/issues
 Source-Repository head
