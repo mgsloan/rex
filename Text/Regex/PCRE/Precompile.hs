@@ -1,4 +1,4 @@
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TupleSections, MagicHash, BangPatterns #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -20,12 +20,15 @@ module Text.Regex.PCRE.Precompile where
 
 import Control.Monad          (liftM)
 import Data.ByteString.Char8  (ByteString)
-import Data.ByteString.Unsafe (unsafePackCStringLen, unsafeUseAsCString)
-import Foreign.ForeignPtr     (withForeignPtr, newForeignPtr_)
+import Data.ByteString.Unsafe (unsafePackCStringLen )
+import Data.ByteString.Internal (toForeignPtr)
+import Foreign.ForeignPtr     (withForeignPtr)
 import Foreign.Ptr            (nullPtr, castPtr)
 import Foreign.Marshal        (alloca)
 import Foreign.Storable       (peek)
 import Foreign.C.Types        (CSize)
+import GHC.Exts               (Int(..), plusAddr#)
+import GHC.ForeignPtr         (ForeignPtr(..))
 import Text.Regex.PCRE.Light
 import Text.Regex.PCRE.Light.Base
 
@@ -50,6 +53,7 @@ regexToTable (Regex p _) =
 
 -- | Creates a regular expression from the compiled representation.
 regexFromTable :: CompiledBytes  -> IO Regex
-regexFromTable bytes = unsafeUseAsCString bytes $ \cstr -> do
-   ptr <- newForeignPtr_ (castPtr cstr)
-   return $ Regex ptr bytes
+regexFromTable bytes =
+  return $ Regex (ForeignPtr (plusAddr# addr offset) content) bytes
+ where
+  !(ForeignPtr addr content, I# offset, _) = toForeignPtr bytes
