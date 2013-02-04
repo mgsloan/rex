@@ -17,16 +17,16 @@
 
 module Text.Regex.PCRE.Precompile where
 
-import Control.Monad          (liftM)
-import Data.ByteString.Char8  (ByteString, packCStringLen)
+import Control.Monad            (liftM)
+import Data.ByteString.Char8    (ByteString, packCStringLen)
 import Data.ByteString.Internal (toForeignPtr)
-import Foreign.ForeignPtr     (withForeignPtr)
-import Foreign.Ptr            (nullPtr, castPtr)
-import Foreign.Marshal        (alloca)
-import Foreign.Storable       (peek)
-import Foreign.C.Types        (CSize)
-import GHC.Exts               (Int(..), plusAddr#)
-import GHC.ForeignPtr         (ForeignPtr(..))
+import Foreign.C.Types          (CSize)
+import Foreign.ForeignPtr       (withForeignPtr)
+import Foreign.Ptr              (nullPtr, castPtr)
+import Foreign.Marshal          (alloca)
+import Foreign.Storable         (peek)
+import GHC.Exts                 (Int(..), plusAddr#)
+import GHC.ForeignPtr           (ForeignPtr(..))
 import Text.Regex.PCRE.Light
 import Text.Regex.PCRE.Light.Base
 
