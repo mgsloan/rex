@@ -1,5 +1,4 @@
-{-# LANGUAGE TupleSections, MagicHash, BangPatterns #-}
-
+{-# LANGUAGE MagicHash, BangPatterns #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Text.Regex.PCRE.Rex
@@ -19,8 +18,7 @@
 module Text.Regex.PCRE.Precompile where
 
 import Control.Monad          (liftM)
-import Data.ByteString.Char8  (ByteString)
-import Data.ByteString.Unsafe (unsafePackCStringLen )
+import Data.ByteString.Char8  (ByteString, packCStringLen)
 import Data.ByteString.Internal (toForeignPtr)
 import Foreign.ForeignPtr     (withForeignPtr)
 import Foreign.Ptr            (nullPtr, castPtr)
@@ -48,7 +46,7 @@ regexToTable (Regex p _) =
     success <- c_pcre_fullinfo pcre nullPtr info_size res
     len <- return . fromIntegral =<< (peek res :: IO CSize)
     if success >= 0 
-      then withForeignPtr p (liftM Just . unsafePackCStringLen . (, len) . castPtr)
+      then liftM Just $ packCStringLen (castPtr pcre, len)
       else return Nothing
 
 -- | Creates a regular expression from the compiled representation.
