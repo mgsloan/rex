@@ -102,12 +102,6 @@
 -- a single variable / pattern, preferring the first non-empty option.  The
 -- general logic for this is a bit complicated, and postponed for a later
 -- release.
--- 
--- 3) The following error currently sometimes happens when using precompiled
---    regular expressions.  This 'feature' is now off by default until this is
---    fixed.
--- 
--- >  <interactive>: out of memory (requested 17584491593728 bytes)
 --
 -- Since pcre-light is a wrapper over a C API, the most efficient interface is
 -- ByteStrings, as it does not natively speak Haskell lists.  The [rex| ... ]
@@ -119,9 +113,10 @@
 -- > rex  = rexWithConf $ defaultRexConf
 -- > brex = rexWithConf $ defaultRexConf { rexByteString = True } 
 -- >
--- > defaultRexConf = RexConf False False "id" [PCRE.extended] []
+-- > defaultRexConf = RexConf False True "id" [PCRE.extended] []
 --
--- As mentioned, the other Bool determines whether precompilation is used.  The
+-- The first @False@ specifies to use @String@ rather than 'ByteString'.  The
+-- @True@ argument specifies to use precompilation.  --  The
 -- string following is the default mapping expression, used when omitted.
 -- Due to GHC staging restrictions, your configuration will need to be in a
 -- different module than its usage.
@@ -166,12 +161,8 @@ import Language.Haskell.Meta.Parse
 
 {- TODO:
   * Benchmark
-  * Fix mentioned caveats
   * Target Text.Regex.Base ? 
-  * Provide a variant which allows splicing in an expression that evaluates to
-    regex string.
   * Add unit tests
-  * Consider allowing passing arity lists in to configuration
 -}
 
 data RexConf = RexConf

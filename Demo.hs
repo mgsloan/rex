@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell, QuasiQuotes, ViewPatterns #-}
 
-module Main where
+module Demo where
 
 import Text.Regex.PCRE.Rex
 
@@ -10,7 +10,7 @@ import Data.Maybe (catMaybes, isJust)
 main =
   do demonstrate "math"      math      "1 + 3"
      demonstrate "math"      math      "3 * 2 + 100"
---     demonstrate "math"      math      "20 / 3 + 100 * 2"
+     demonstrate "math"      math      "20 / 3 + 100 * 2"
      demonstrate "peano"     peano     "S Z"
      demonstrate "peano"     peano     "S S S S Z"
      demonstrate "peano"     peano     "S   S   Z"

@@ -3,22 +3,22 @@
 module Main where
 
 import Text.Regex.PCRE.Rex
-import Test
+import qualified Demo
 
 import Criterion.Main
 
 addEm :: Int -> [Double]
-addEm n = map math $
+addEm n = map Demo.math $
   zipWith (++)
     (zipWith (++) (map show [1..n])
     (concat $ repeat ["+", "/", "-", "*"]))
   (map show [100..])
 
-peanoize n = map (\i -> peano . (++"Z") . concat $ replicate i "S ") [0..n]
+peanoize n = map (\i -> Demo.peano . (++"Z") . concat $ replicate i "S ") [0..n]
 
-testPairs n = [parsePair $ "<" ++ replicate i ' ' ++ "a, pair>" | i <- [0..n]]
+testPairs n = [Demo.parsePair $ "<" ++ replicate i ' ' ++ "a, pair>" | i <- [0..n]]
 
-testDate n = [parseDate $ show i ++ ".10.20" | i <- [1900 .. 1900 + n]]
+testDate n = [Demo.parseDate $ show i ++ ".10.20" | i <- [1900 .. 1900 + n]]
 
 --NOTE: benchmark time includes test generation
 
