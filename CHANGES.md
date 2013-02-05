@@ -19,7 +19,7 @@
 ----------------
   * Made configuration into a datatype.
 
-0.4.1: Feb 4 2013
+0.4.2: Feb 4 2013
 ------------------
   * Precompilation bugs fixed by [takano-akio](https://github.com/takano-akio)!
     Now precompilation is on by default.

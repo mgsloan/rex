@@ -22,9 +22,6 @@
 -- 4) Precompiles the regular expression at compile time, by calling into the
 -- PCRE library and storing a 'ByteString' literal representation of its state.
 --
--- NOTE: for some unknown reason this feature is currently broken, and so off by
--- default.
---
 -- 5) Compile-time configurable to use different PCRE options, turn off
 -- precompilation, use 'ByteString's, or set a default mapping expression.
 --
