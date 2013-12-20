@@ -1,4 +1,8 @@
-{-# LANGUAGE TemplateHaskell, QuasiQuotes, TupleSections, ViewPatterns #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -----------------------------------------------------------------------------
 -- |
@@ -8,12 +12,12 @@
 -- Maintainer  :  Michael Sloan (mgsloan@gmail.com)
 -- Stability   :  unstable
 -- Portability :  unportable
--- 
+--
 -- This module provides a template Haskell quasiquoter for regular
 -- expressions, which provides the following features:
--- 
+--
 -- 1) Compile-time checking that the regular expression is valid.
--- 
+--
 -- 2) Arity of resulting tuple based on the number of selected capture patterns
 -- in the regular expression.
 --
@@ -102,7 +106,7 @@
 -- 'QuasiQuoter' - the definitions of the default configurations are as follows:
 --
 -- > rex  = rexWithConf $ defaultRexConf
--- > brex = rexWithConf $ defaultRexConf { rexByteString = True } 
+-- > brex = rexWithConf $ defaultRexConf { rexByteString = True }
 -- >
 -- > defaultRexConf = RexConf False True "id" [PCRE.extended] []
 --
@@ -153,15 +157,14 @@ import Language.Haskell.Exts (parseExpWithMode, parsePatWithMode,
                               ParseResult(..))
 
 {- TODO:
-  * Benchmark
-  * Target Text.Regex.Base ? 
+  * Target Text.Regex.Base ?
   * Add unit tests
 -}
 
 data RexConf = RexConf
   { rexByteString :: Bool
   , rexCompiled :: Bool
-  , rexView :: String 
+  , rexView :: String
   , rexPCREOpts :: [PCRE.PCREOption]
   , rexPCREExecOpts :: [PCRE.PCREExecOption]
   }
@@ -172,35 +175,35 @@ rex, brex :: QuasiQuoter
 rex  = rexWithConf $ defaultRexConf
 brex = rexWithConf $ defaultRexConf { rexByteString = True }
 
--- | This is a 'QuasiQuoter' transformer, which allows for a whitespace-sensitive
--- quasi-quoter to be broken over multiple lines.  The default 'rex' and
--- 'brex' functions do not need this as they are already whitespace insensitive.
--- However, if you create your own configuration, which omits the 'PCRE.extended'
--- parameter, then this could be useful. The leading space of each line is
--- ignored, and all newlines removed.
+-- | This is a 'QuasiQuoter' transformer, which allows for a whitespace-
+--   sensitive quasi-quoter to be broken over multiple lines.  The default 'rex'
+--   and 'brex' functions do not need this as they are already whitespace
+--   insensitive. However, if you create your own configuration, which omits the
+--   'PCRE.extended' parameter, then this could be useful. The leading space of
+--   each line is ignored, and all newlines removed.
 makeQuasiMultiline :: QuasiQuoter -> QuasiQuoter
-makeQuasiMultiline (QuasiQuoter a b c d)
-  = QuasiQuoter (a . pre) (b . pre) (c . pre) (d . pre)
- where
-  pre = concat . (\(x:xs) -> x : map (dropWhile isSpace) xs) . lines
+makeQuasiMultiline (QuasiQuoter a b c d) =
+    QuasiQuoter (a . pre) (b . pre) (c . pre) (d . pre)
+  where
+    pre = concat . (\(x:xs) -> x : map (dropWhile isSpace) xs) . lines
 
 -- | Default rex configuration, which specifies that the regexes operate on
--- strings, don't postprocess the matched patterns, and use 'PCRE.extended'.
--- This setting causes whitespace to be nonsemantic, and ignores # comments.
+--   strings, don't postprocess the matched patterns, and use 'PCRE.extended'.
+--   This setting causes whitespace to be nonsemantic, and ignores # comments.
 defaultRexConf :: RexConf
 defaultRexConf = RexConf False False "id" [PCRE.extended] []
 
 -- | A configureable regular-expression QuasiQuoter.  Takes the options to pass
--- to the PCRE engine, along with 'Bool's to flag 'ByteString' usage and
--- non-compilation respecively.  The provided 'String' indicates which mapping
--- function to use, when one is omitted - \"(?{} ...)\".
+--   to the PCRE engine, along with 'Bool's to flag 'ByteString' usage and
+--   non-compilation respecively.  The provided 'String' indicates which mapping
+--   function to use, when one is omitted - \"(?{} ...)\".
 rexWithConf :: RexConf -> QuasiQuoter
-rexWithConf conf
-  = QuasiQuoter
-      (makeExp conf . parseIt)
-      (makePat conf . parseIt)
-      undefined
-      undefined
+rexWithConf conf =
+  QuasiQuoter
+    (makeExp conf . parseIt)
+    (makePat conf . parseIt)
+    undefined
+    undefined
 
 -- Template Haskell Code Generation
 -------------------------------------------------------------------------------
@@ -213,11 +216,11 @@ makeExp :: RexConf -> ParseChunks -> ExpQ
 makeExp conf (cnt, pat, exs) = buildExp conf cnt pat exs'
  where
   exs' = map (\ix -> liftM (forceEitherMsg "makeExp" . processExp conf) $ lookup ix exs) [0..cnt]
-  
+
 -- Creates the template haskell Pat which corresponds to the parsed interpolated
 -- regex. As well as handling the aforementioned defaulting considerations, this
 -- turns per-capture view patterns into a single tuple-resulting view pattern.
--- 
+--
 -- E.g. [reg| ... (?{e1 -> v1} ...) ... (?{e2 -> v2} ...) ... |] becomes
 --      [reg| ... (?{e1} ...) ... (?{e2} ...) ... |] -> (v1, v2)
 makePat :: RexConf -> ParseChunks -> PatQ
@@ -240,43 +243,43 @@ makePat conf (cnt, pat, exs) = do
 -- number of captures, the pattern string, and a list of capture expressions,
 -- yields the template Haskell Exp which parses a string into a tuple.
 buildExp :: RexConf -> Int -> String -> [Maybe Exp] -> ExpQ
-buildExp conf cnt pat xs =
-  [| let r = $(get_regex) in
-     $(process) . (flip $ PCRE.match r) $(liftRS $ rexPCREExecOpts conf)
-   . $(if rexByteString conf then [| id |] else [| pack |]) |]
- where
-  liftRS x = [| read shown |] where shown = show x
+buildExp RexConf{..} cnt pat xs =
+    [| let r = $(get_regex) in
+       $(process) . (flip $ PCRE.match r) $(liftRS rexPCREExecOpts)
+     . $(if rexByteString then [| id |] else [| pack |]) |]
+  where
+    liftRS x = [| read shown |] where shown = show x
 
-  --TODO: make sure this takes advantage of bytestring fusion stuff - is
-  -- the right pack / unpack. Or use XOverloadedStrings
-  get_regex 
-    | rexCompiled conf = [| unsafePerformIO (regexFromTable $! $(table_bytes)) |]
-    | otherwise = [| PCRE.compile (pack pat) $(liftRS pcreOpts) |]
-  table_bytes = [| pack $(LitE . StringL . unpack <$> runIO table_string) |]
-  table_string
-     = forceMaybeMsg "Error while getting PCRE compiled representation\n"
-   <$> precompile (pack pat) pcreOpts
-  pcreOpts = rexPCREOpts conf
+    --TODO: make sure this takes advantage of bytestring fusion stuff - is
+    -- the right pack / unpack. Or use XOverloadedStrings
+    get_regex
+      | rexCompiled = [| unsafePerformIO (regexFromTable $! $(table_bytes)) |]
+      | otherwise = [| PCRE.compile (pack pat) $(liftRS pcreOpts) |]
+    table_bytes = [| pack $(LitE . StringL . unpack <$> runIO table_string) |]
+    table_string =
+      forceMaybeMsg "Error while getting PCRE compiled representation\n" <$>
+      precompile (pack pat) pcreOpts
+    pcreOpts = rexPCREOpts
 
-  process = case (null vs, rexByteString conf) of
-    (True, _)  -> [| liftM ( const () ) |]
-    (_, False) -> [| liftM ($(return maps) . padRight "" pad . map unpack) |]
-    (_, True)  -> [| liftM ($(return maps) . padRight empty pad) |]
-  pad = cnt + 2
-  maps = LamE [ListP . (WildP:) $ map VarP vs]
-       . TupE . map (uncurry AppE)
-       -- filter out all "Nothing" exprs
-       . map (first fromJust) . filter (isJust . fst)
-       -- [(Expr, Variable applied to)]
-       . zip xs $ map VarE vs
-  vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
+    process = case (null vs, rexByteString) of
+      (True, _)  -> [| liftM ( const () ) |]
+      (_, False) -> [| liftM ($(return maps) . padRight "" pad . map unpack) |]
+      (_, True)  -> [| liftM ($(return maps) . padRight empty pad) |]
+    pad = cnt + 2
+    maps = LamE [ListP . (WildP:) $ map VarP vs]
+         . TupE . map (uncurry AppE)
+         -- filter out all "Nothing" exprs
+         . map (first fromJust) . filter (isJust . fst)
+         -- [(Expr, Variable applied to)]
+         . zip xs $ map VarE vs
+    vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
 
 -- Parse a Haskell expression into a template Haskell Exp
 processExp :: RexConf -> String -> ParseResult Exp
 processExp conf xs
   = fmap toExp
   . parseExpWithMode rexParseMode
-        $ onSpace xs (rexView conf) id
+  $ onSpace xs (rexView conf) id
 
 -- probably the quasiquote should have access to the pragmas in the current
 -- file, but for now just enable some common extensions that do not steal
@@ -291,7 +294,6 @@ rexParseMode = defaultParseMode{ extensions = map EnableExtension
      TypeFamilies,
      TypeOperators ]}
 
-
 -- Parse a Haskell pattern match into a template Haskell Pat, yielding Nothing
 -- for patterns which consist of just whitespace.
 processPat :: String -> ParseResult Pat
@@ -304,12 +306,14 @@ type ParseChunk = Either String (Int, String)
 type ParseChunks = (Int, String, [(Int, String)])
 
 -- Postprocesses the results of the chunk-wise parse output, into the pattern to
--- be pased to the regex engine, and the interpolated 
+-- be pased to the regex engine, with the interpolated patterns / expressions.
 parseIt :: String -> ParseChunks
-parseIt xs = ( cnt, concat [x | Left x <- results]
-             , [(i, x) | Right (i, x) <- results])
- where
-  (cnt, results) = parseRegex (filter (`notElem` "\r\n") xs) "" (-1)
+parseIt xs =
+    ( cnt, concat [x | Left x <- results]
+    , [(i, x) | Right (i, x) <- results]
+    )
+  where
+    (cnt, results) = parseRegex (filter (`notElem` "\r\n") xs) "" (-1)
 
 -- A pair of mutually-recursive functions, one for processing the quotation
 -- and the other for the anti-quotation.
