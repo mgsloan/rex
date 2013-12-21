@@ -81,12 +81,6 @@
 -- >           -> Just (y, m, d))
 --
 --
--- Caveat: Since haskell-src-exts does not support parsing view-patterns, the
--- above is implemented as a relatively naive split on \"->\".  It presumes that
--- the last \"->\" in the interpolated pattern seperates the pattern from an
--- expression on the left.  This allows for lambdas to be present in the
--- expression, but prevents nesting view patterns.
---
 -- There are also a few other inelegances:
 --
 -- 1) PCRE captures, unlike .NET regular expressions, yield the last capture
@@ -146,15 +140,17 @@ import Control.Applicative   ( (<$>) )
 import Control.Arrow         ( first )
 import Control.Monad         ( liftM )
 import Data.ByteString.Char8 ( pack, unpack, empty )
-import Data.List             ( find )
-import Data.List.Split       ( split, onSublist )
 import Data.Maybe            ( catMaybes, listToMaybe, fromJust, isJust )
 import Data.Char             ( isSpace )
 import System.IO.Unsafe      ( unsafePerformIO )
 
 import Language.Haskell.TH
 import Language.Haskell.TH.Quote
-import Language.Haskell.Meta.Parse
+import Language.Haskell.Meta (toExp,toPat)
+import Language.Haskell.Exts.Extension (Extension(..), KnownExtension(..))
+import Language.Haskell.Exts (parseExpWithMode, parsePatWithMode,
+                              ParseMode, defaultParseMode, extensions,
+                              ParseResult(..))
 
 {- TODO:
   * Benchmark
@@ -216,7 +212,7 @@ rexWithConf conf
 makeExp :: RexConf -> ParseChunks -> ExpQ
 makeExp conf (cnt, pat, exs) = buildExp conf cnt pat exs'
  where
-  exs' = map (\ix -> liftM (processExp conf . snd) $ find ((==ix) . fst) exs) [0..cnt]
+  exs' = map (\ix -> liftM (forceEitherMsg "makeExp" . processExp conf) $ lookup ix exs) [0..cnt]
   
 -- Creates the template haskell Pat which corresponds to the parsed interpolated
 -- regex. As well as handling the aforementioned defaulting considerations, this
@@ -228,21 +224,17 @@ makePat :: RexConf -> ParseChunks -> PatQ
 makePat conf (cnt, pat, exs) = do
   viewExp <- buildExp conf cnt pat $ map (liftM fst) views
   return . ViewP viewExp
-         . (\xs -> ConP (mkName "Just") [TupP xs])
+         . (\xs -> ConP 'Just [TupP xs])
          . map snd $ catMaybes views
  where
   views :: [Maybe (Exp, Pat)]
-  views = map (\ix -> liftM (processView . snd) $ find ((==ix).fst) exs) [0..cnt]
+  views = map (\ix -> liftM processView $ lookup ix exs) [0..cnt]
 
   processView :: String -> (Exp, Pat)
-  processView xs = case splitFromBack 2 ((split . onSublist) "->" xs) of
-    (_, [r]) -> onSpace r (error $ "blank pattern in view: " ++ r)
-                          ((processExp conf "",) . processPat)
-    -- View pattern
-    (l, [_, r]) -> (processExp conf $ concat l, processPat r)
-    -- Included so that Haskell doesn't warn about non-exhaustive patterns
-    -- (even though the above are exhaustive in this context)
-    _ -> undefined
+  processView xs = case processPat ("("++xs++")") of
+    ParseOk (ParensP (ViewP e p)) -> (e,p)
+    ParseOk p -> (forceEitherMsg "impossible" (processExp conf ""), p)
+    ParseFailed _ b -> error b
 
 -- Here's where the main meat of the template haskell is generated.  Given the
 -- number of captures, the pattern string, and a list of capture expressions,
@@ -280,17 +272,30 @@ buildExp conf cnt pat xs =
   vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
 
 -- Parse a Haskell expression into a template Haskell Exp
-processExp :: RexConf -> String -> Exp
+processExp :: RexConf -> String -> ParseResult Exp
 processExp conf xs
-  = forceEitherMsg ("Error while parsing capture mapper `" ++ xs ++ "'")
-  . parseExp $ onSpace xs (rexView conf) id
+  = fmap toExp
+  . parseExpWithMode rexParseMode
+        $ onSpace xs (rexView conf) id
+
+-- probably the quasiquote should have access to the pragmas in the current
+-- file, but for now just enable some common extensions that do not steal
+-- much syntax
+rexParseMode :: ParseMode
+rexParseMode = defaultParseMode{ extensions = map EnableExtension
+    [ViewPatterns,
+     ImplicitParams,
+     RecordPuns, RecordWildCards,
+     ScopedTypeVariables,
+     TupleSections,
+     TypeFamilies,
+     TypeOperators ]}
+
 
 -- Parse a Haskell pattern match into a template Haskell Pat, yielding Nothing
 -- for patterns which consist of just whitespace.
-processPat :: String -> Pat
-processPat xs
-  = forceEitherMsg ("Error while parsing capture pattern `" ++ xs ++ "'")
-  $ parsePat xs
+processPat :: String -> ParseResult Pat
+processPat xs = fmap toPat $ parsePatWithMode rexParseMode xs
 
 -- Parsing
 -------------------------------------------------------------------------------
@@ -355,10 +360,6 @@ parseHaskell inp s ix = case inp of
 maybeRead :: (Read a) => String -> Maybe a
 maybeRead = fmap fst . listToMaybe . reads
 
-splitFromBack :: Int -> [a] -> ([a], [a])
-splitFromBack i xs = (reverse b, reverse a)
-  where (a, b) = splitAt i $ reverse xs
-
 onSpace :: String -> a -> (String -> a) -> a
 onSpace s x f | all isSpace s = x
               | otherwise = f s
@@ -382,6 +383,6 @@ forceMaybeMsg msg Nothing = error msg
 forceMaybeMsg _ (Just x) = x
 
 {- | Like 'forceEither', but can raise a specific message with the error. -}
-forceEitherMsg :: Show e => String -> Either e a -> a
-forceEitherMsg msg (Left x) = error $ msg ++ ": " ++ show x
-forceEitherMsg _ (Right x) = x
+forceEitherMsg :: String -> ParseResult a -> a
+forceEitherMsg msg (ParseFailed x _) = error $ msg ++ ": " ++ show x
+forceEitherMsg _ (ParseOk x) = x

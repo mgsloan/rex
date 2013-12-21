@@ -32,5 +32,6 @@ Library
   Exposed-modules:   Text.Regex.PCRE.Rex, Text.Regex.PCRE.Precompile
   Build-depends:     base >= 3.0 && < 6, bytestring, containers, ghc >= 7.0,
                      haskell-src-meta >= 0.5, pcre-light, split,
+                     haskell-src-exts >= 1.14,
                      template-haskell >= 2.5.0.0
   Ghc-options:       -Wall
