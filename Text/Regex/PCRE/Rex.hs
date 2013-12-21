@@ -142,8 +142,8 @@ import qualified Text.Regex.PCRE.Light as PCRE
 
 import Control.Applicative   ( (<$>) )
 import Control.Arrow         ( first )
-import Control.Monad         ( liftM )
 import Data.ByteString.Char8 ( pack, unpack, empty )
+import Data.Either           ( partitionEithers )
 import Data.Maybe            ( catMaybes, listToMaybe, fromJust, isJust )
 import Data.Char             ( isSpace )
 import System.IO.Unsafe      ( unsafePerformIO )
@@ -200,22 +200,21 @@ defaultRexConf = RexConf False False "id" [PCRE.extended] []
 rexWithConf :: RexConf -> QuasiQuoter
 rexWithConf conf =
   QuasiQuoter
-    (makeExp conf . parseIt)
-    (makePat conf . parseIt)
+    (makeExp conf . parseRex)
+    (makePat conf . parseRex)
     undefined
     undefined
 
 -- Template Haskell Code Generation
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
 -- Creates the template haskell Exp which corresponds to the parsed interpolated
 -- regex.  This particular code mainly just handles making "read" the
 -- default for captures which lack a parser definition, and defaulting to making
 -- the parser that doesn't exist
 makeExp :: RexConf -> ParseChunks -> ExpQ
-makeExp conf (cnt, pat, exs) = buildExp conf cnt pat exs'
- where
-  exs' = map (\ix -> liftM (forceEitherMsg "makeExp" . processExp conf) $ lookup ix exs) [0..cnt]
+makeExp conf (cnt, pat, exs) = buildExp conf cnt pat $
+  map (fmap $ forceEitherMsg "makeExp" . parseExp conf) exs
 
 -- Creates the template haskell Pat which corresponds to the parsed interpolated
 -- regex. As well as handling the aforementioned defaulting considerations, this
@@ -225,18 +224,18 @@ makeExp conf (cnt, pat, exs) = buildExp conf cnt pat exs'
 --      [reg| ... (?{e1} ...) ... (?{e2} ...) ... |] -> (v1, v2)
 makePat :: RexConf -> ParseChunks -> PatQ
 makePat conf (cnt, pat, exs) = do
-  viewExp <- buildExp conf cnt pat $ map (liftM fst) views
+  viewExp <- buildExp conf cnt pat $ map (fmap fst) views
   return . ViewP viewExp
          . (\xs -> ConP 'Just [TupP xs])
          . map snd $ catMaybes views
  where
   views :: [Maybe (Exp, Pat)]
-  views = map (\ix -> liftM processView $ lookup ix exs) [0..cnt]
+  views = map (fmap processView) exs
 
   processView :: String -> (Exp, Pat)
   processView xs = case processPat ("("++xs++")") of
     ParseOk (ParensP (ViewP e p)) -> (e,p)
-    ParseOk p -> (forceEitherMsg "impossible" (processExp conf ""), p)
+    ParseOk p -> (forceEitherMsg "impossible" (parseExp conf ""), p)
     ParseFailed _ b -> error b
 
 -- Here's where the main meat of the template haskell is generated.  Given the
@@ -262,9 +261,9 @@ buildExp RexConf{..} cnt pat xs =
     pcreOpts = rexPCREOpts
 
     process = case (null vs, rexByteString) of
-      (True, _)  -> [| liftM ( const () ) |]
-      (_, False) -> [| liftM ($(return maps) . padRight "" pad . map unpack) |]
-      (_, True)  -> [| liftM ($(return maps) . padRight empty pad) |]
+      (True, _)  -> [| fmap ( const () ) |]
+      (_, False) -> [| fmap ($(return maps) . padRight "" pad . map unpack) |]
+      (_, True)  -> [| fmap ($(return maps) . padRight empty pad) |]
     pad = cnt + 2
     maps = LamE [ListP . (WildP:) $ map VarP vs]
          . TupE . map (uncurry AppE)
@@ -275,8 +274,8 @@ buildExp RexConf{..} cnt pat xs =
     vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
 
 -- Parse a Haskell expression into a template Haskell Exp
-processExp :: RexConf -> String -> ParseResult Exp
-processExp conf xs
+parseExp :: RexConf -> String -> ParseResult Exp
+parseExp conf xs
   = fmap toExp
   . parseExpWithMode rexParseMode
   $ onSpace xs (rexView conf) id
@@ -285,14 +284,18 @@ processExp conf xs
 -- file, but for now just enable some common extensions that do not steal
 -- much syntax
 rexParseMode :: ParseMode
-rexParseMode = defaultParseMode{ extensions = map EnableExtension
-    [ViewPatterns,
-     ImplicitParams,
-     RecordPuns, RecordWildCards,
-     ScopedTypeVariables,
-     TupleSections,
-     TypeFamilies,
-     TypeOperators ]}
+rexParseMode = defaultParseMode { extensions = map EnableExtension exts }
+  where
+    exts =
+      [ ViewPatterns
+      , ImplicitParams
+      , RecordPuns
+      , RecordWildCards
+      , ScopedTypeVariables
+      , TupleSections
+      , TypeFamilies
+      , TypeOperators
+      ]
 
 -- Parse a Haskell pattern match into a template Haskell Pat, yielding Nothing
 -- for patterns which consist of just whitespace.
@@ -300,19 +303,17 @@ processPat :: String -> ParseResult Pat
 processPat xs = fmap toPat $ parsePatWithMode rexParseMode xs
 
 -- Parsing
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
-type ParseChunk = Either String (Int, String)
-type ParseChunks = (Int, String, [(Int, String)])
+type ParseChunk = Either String (Maybe String)
+type ParseChunks = (Int, String, [Maybe String])
 
 -- Postprocesses the results of the chunk-wise parse output, into the pattern to
 -- be pased to the regex engine, with the interpolated patterns / expressions.
-parseIt :: String -> ParseChunks
-parseIt xs =
-    ( cnt, concat [x | Left x <- results]
-    , [(i, x) | Right (i, x) <- results]
-    )
+parseRex :: String -> ParseChunks
+parseRex xs = (cnt, concat chunks, quotes)
   where
+    (chunks, quotes) = partitionEithers results
     (cnt, results) = parseRegex (filter (`notElem` "\r\n") xs) "" (-1)
 
 -- A pair of mutually-recursive functions, one for processing the quotation
@@ -334,30 +335,31 @@ parseRegex inp s ix = case inp of
 
   -- Anti-quote for processing a capture group.
   ('(':'?':'{':xs) -> mapSnd ((Left $ reverse ('(':s)) :)
-                    $ parseHaskell xs "" (ix + 1)
+                    $ parseAntiquote xs "" (ix + 1)
 
   -- Keep track of how many capture groups we've seen.
-  ('(':xs) -> parseRegex xs ('(':s) (ix + 1)
+  ('(':xs) -> mapSnd (Right Nothing :)
+            $ parseRegex xs ('(':s) (ix + 1)
 
   -- Consume the regular expression contents.
   (x:xs) -> parseRegex xs (x:s) ix
   [] -> (ix, [Left $ reverse s])
 
-parseHaskell :: String -> String -> Int -> (Int, [ParseChunk])
-parseHaskell inp s ix = case inp of
+parseAntiquote :: String -> String -> Int -> (Int, [ParseChunk])
+parseAntiquote inp s ix = case inp of
   -- Escape } in the Haskell splice using a backslash.
-  ('\\':'}':xs) -> parseHaskell xs ('}':s) ix
+  ('\\':'}':xs) -> parseAntiquote xs ('}':s) ix
 
   -- Capture accumulated antiquote, and continue parsing regex literal.
-  ('}':xs) -> mapSnd ((Right (ix, reverse s)):)
+  ('}':xs) -> mapSnd ((Right (Just (reverse s))):)
             $ parseRegex xs "" ix
 
   -- Consume the antiquoute contents, appending to a reverse accumulator.
-  (x:xs) -> parseHaskell xs (x:s) ix
+  (x:xs) -> parseAntiquote xs (x:s) ix
   [] -> error "Rex haskell splice terminator, }, never found"
 
 -- Utils
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
 -- | A possibly useful utility function - yields 'Just' x when there is a
 -- valid parse, and 'Nothing' otherwise.
