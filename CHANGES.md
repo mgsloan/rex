@@ -35,3 +35,7 @@
     pat antiquotes.  The default match processing is now "rexView", an
     identifier that can be shadowed locally or hidden on import.
   * Removed 'maybeRead'.
+
+0.5.1: Feb 20 2014
+------------------
+  * Made the type of the default 'rexView' fully polymorphic.

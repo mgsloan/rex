@@ -432,7 +432,10 @@ padRight v i (x:xs) = x : padRight v (i-1) xs
 --   You can locally shadow this 'rexView' with your own version, if you wish.
 --   One good option is readMay from the safe package:
 --   <http://hackage.haskell.org/package/safe/docs/Safe.html#v:readMay>.
-rexView :: String -> String
+--
+--   The type of this identity rexView is fully polymorphic so that it can be
+--   used with either 'String' or 'ByteString'.
+rexView :: a -> a
 rexView = id
 
 mapSnd :: (t -> t2) -> (t1, t) -> (t1, t2)
