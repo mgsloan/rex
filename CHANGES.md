@@ -34,3 +34,4 @@
   * Changed the configuration datatype to allow custom preprocessing of expr /
     pat antiquotes.  The default match processing is now "rexView", an
     identifier that can be shadowed locally or hidden on import.
+  * Removed 'maybeRead'.

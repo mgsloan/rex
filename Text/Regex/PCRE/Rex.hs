@@ -157,7 +157,7 @@ module Text.Regex.PCRE.Rex
   , parsePat
   , rexParseMode
 -- * Used by the generated code
-  , maybeRead, padRight, rexView
+  , padRight, rexView
   ) where
 
 import Text.Regex.PCRE.Precompile
@@ -168,7 +168,7 @@ import Control.Applicative   ( (<$>) )
 import Control.Arrow         ( first )
 import Data.ByteString.Char8 ( pack, unpack, empty )
 import Data.Either           ( partitionEithers )
-import Data.Maybe            ( catMaybes, listToMaybe, fromJust, isJust )
+import Data.Maybe            ( catMaybes, fromJust, isJust )
 import Data.Char             ( isSpace )
 import System.IO.Unsafe      ( unsafePerformIO )
 
@@ -418,11 +418,6 @@ parseAntiquote inp s ix = case inp of
 -- Utils
 --------------------------------------------------------------------------------
 
--- | A possibly useful utility function - yields 'Just' x when there is a
--- valid parse, and 'Nothing' otherwise.
-maybeRead :: (Read a) => String -> Maybe a
-maybeRead = fmap fst . listToMaybe . reads
-
 -- | Given a desired list-length, if the passed list is too short, it is padded
 -- with the given element.  Otherwise, it trims.
 padRight :: a -> Int -> [a] -> [a]
@@ -430,7 +425,14 @@ padRight _ 0 _ = []
 padRight v i [] = replicate i v
 padRight v i (x:xs) = x : padRight v (i-1) xs
 
-rexView :: a -> a
+-- | A default view function used when expression antiquotes are empty, or when
+--   pattern antiquotes omit a view pattern.  See the documentation for
+--   'rexPreprocessPat' and 'rexPreprocessExp' for more details.
+--
+--   You can locally shadow this 'rexView' with your own version, if you wish.
+--   One good option is readMay from the safe package:
+--   <http://hackage.haskell.org/package/safe/docs/Safe.html#v:readMay>.
+rexView :: String -> String
 rexView = id
 
 mapSnd :: (t -> t2) -> (t1, t) -> (t1, t2)
