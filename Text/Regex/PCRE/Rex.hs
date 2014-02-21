@@ -13,8 +13,8 @@
 -- Stability   :  unstable
 -- Portability :  unportable
 --
--- This module provides a template Haskell quasiquoter for regular
--- expressions, which provides the following features:
+-- This module provides a template Haskell quasiquoter for regular expressions,
+-- which provides the following features:
 --
 -- 1) Compile-time checking that the regular expression is valid.
 --
@@ -29,14 +29,29 @@
 -- 5) Compile-time configurable to use different PCRE options, turn off
 -- precompilation, use 'ByteString's, or set a default mapping expression.
 --
+-- Inspired by Matt Morrow's regexqq package:
+-- <http://hackage.haskell.org/packages/archive/regexqq/latest/doc/html/src/Text-Regex-PCRE-QQ.html>
+--
+-- And code from Erik Charlebois's interpolatedstring-qq package:
+-- <http://hackage.haskell.org/packages/archive/interpolatedstring-qq/latest/doc/html/Text-InterpolatedString-QQ.html>
+--
+-----------------------------------------------------------------------------
+
+module Text.Regex.PCRE.Rex
+  (
+
+-- * Language Extensions
+-- |
 -- Since this is a quasiquoter library that generates code using view patterns,
 -- the following extensions are required:
 --
 -- > {-# LANGUAGE TemplateHaskell, QuasiQuotes, ViewPatterns #-}
---
--- Here's a silly example which parses peano numbers of the form Z, S Z,
--- S S Z, etc.  The \s+ means that it is not sensitive to the quantity or type
--- of seperating whitespace. (these examples can also be found in Test.hs)
+
+-- * First Example
+-- |
+-- Here's an example which parses peano numbers of the form Z, S Z, S S Z, etc.
+-- The \s+ means that it is not sensitive to the quantity or type of separating
+-- whitespace.  These examples can also be found in Test.hs.
 --
 -- > peano :: String -> Maybe Int
 -- > peano = [rex|^(?{ length . filter (=='S') } \s* (?:S\s+)*Z)\s*$|]
@@ -53,14 +68,28 @@
 -- > Nothing
 --
 -- The token \"(?{\" introduces a capture group which has a mapping applied to
--- the -- result - in this case \"length . filter (=='S')\".  If the ?{ ... }
+-- the result. In this case, it's @length . filter (=='S')@.  If the ?{ ... }
 -- are omitted, then the capture group is not taken as part of the results of
--- the match.  If the contents of the ?{ ... } is omitted, then 'id' is assumed:
+-- the match.  If the contents of the ?{ ... } is omitted, then a call to
+-- 'rexView' is assumed:
 --
 -- > parsePair :: String -> Maybe (String, String)
 -- > parsePair = [rex|^<\s* (?{ }[^\s,>]+) \s*,\s* (?{ }[^\s,>]+) \s*>$|]
 --
--- The following example is derived from
+-- The 'rexView' exported by this module is just equal to 'id', so by default
+-- no preprocessing is done.  However, we can shadow this locally:
+--
+-- > parsePair' :: String -> Maybe (Int, Int)
+-- > parsePair' = [rex|^<\s* (?{ }[^\s,>]+) \s*,\s* (?{ }[^\s,>]+) \s*>$|]
+-- >   where
+-- >     rexView = read
+--
+-- Additional shorthands can be added by using 'rexWithConf' and specifying
+-- custom values for 'rexPreprocessExp' or 'rexPreprocessPat'.
+
+-- * Second Example
+-- |
+-- This example is derived from
 -- http://www.regular-expressions.info/dates.html
 --
 -- > parseDate :: String -> Maybe (Int, Int, Int)
@@ -83,21 +112,9 @@
 -- >                  (?{ read }0[1-9]|1[012])[- /.]
 -- >                  (?{ read }0[1-9]|[12][0-9]|3[01])$|]
 -- >           -> Just (y, m, d))
---
---
--- There are also a few other inelegances:
---
--- 1) PCRE captures, unlike .NET regular expressions, yield the last capture
--- made by a particular pattern.  So, for example, (...)*, will only yield one
--- match for '...'.  Ideally these would be detected and yield an implicit [a].
---
--- 2) Patterns with disjunction between captures ((?{f}a) | (?{g}b)) will
--- provide the empty string to one of f / g.  In the case of pattern
--- expressions, it would be convenient to be able to map multiple captures into
--- a single variable / pattern, preferring the first non-empty option.  The
--- general logic for this is a bit complicated, and postponed for a later
--- release.
---
+
+-- * ByteStrings vs Strings
+-- |
 -- Since pcre-light is a wrapper over a C API, the most efficient interface is
 -- ByteStrings, as it does not natively speak Haskell lists.  The [rex| ... ]
 -- quasiquoter implicitely packs the input into a bystestring, and unpacks the
@@ -115,25 +132,32 @@
 -- string following is the default mapping expression, used when omitted.
 -- Due to GHC staging restrictions, your configuration will need to be in a
 -- different module than its usage.
---
--- Inspired by Matt Morrow's regexqq package:
--- <http://hackage.haskell.org/packages/archive/regexqq/latest/doc/html/src/Text-Regex-PCRE-QQ.html>
---
--- And code from Erik Charlebois's interpolatedstring-qq package:
--- <http://hackage.haskell.org/packages/archive/interpolatedstring-qq/latest/doc/html/Text-InterpolatedString-QQ.html>
---
------------------------------------------------------------------------------
 
-module Text.Regex.PCRE.Rex
-  (
-  -- * Quasiquoters
+-- * Future Work
+-- |
+-- There are a few things that could potentially be improved:
+--
+-- 1) PCRE captures, unlike .NET regular expressions, yield the last capture
+-- made by a particular pattern.  So, for example, (...)*, will only yield one
+-- match for '...'.  Ideally these would be detected and yield an implicit [a].
+--
+-- 2) Patterns with disjunction between captures ((?{f}a) | (?{g}b)) will
+-- provide the empty string to one of f / g.  In the case of pattern
+-- expressions, it would be convenient to be able to map multiple captures into
+-- a single variable / pattern, preferring the first non-empty option.
+
+-- * Quasiquoters
     rex, brex
-  -- * Configurable QuasiQuoter
+-- * Configurable QuasiQuoter
   , rexWithConf, RexConf(..), defaultRexConf
-  -- * Utility
+-- * Utilities
   , makeQuasiMultiline
-  -- * Used by Generated Code
-  , maybeRead, padRight
+  , eitherToParseResult
+  , parseExp
+  , parsePat
+  , rexParseMode
+-- * Used by the generated code
+  , maybeRead, padRight, rexView
   ) where
 
 import Text.Regex.PCRE.Precompile
@@ -155,25 +179,63 @@ import Language.Haskell.Exts.Extension (Extension(..), KnownExtension(..))
 import Language.Haskell.Exts (parseExpWithMode, parsePatWithMode,
                               ParseMode, defaultParseMode, extensions,
                               ParseResult(..))
+import Language.Haskell.Exts.SrcLoc (noLoc)
 
 {- TODO:
   * Target Text.Regex.Base ?
   * Add unit tests
 -}
 
-data RexConf = RexConf
-  { rexByteString :: Bool
-  , rexCompiled :: Bool
-  , rexView :: String
-  , rexPCREOpts :: [PCRE.PCREOption]
-  , rexPCREExecOpts :: [PCRE.PCREExecOption]
+data RexConf = RexConf {
+  -- | When @True@, the input type is a ByteString, otherwise, it's a String.
+  rexByteString :: Bool,
+  -- | When @True@, the regex is precompiled.
+  rexCompiled :: Bool,
+  -- | Preprocess the string used in expression antiquotes.  'defaultRexConf'
+  --   just passes through the string unaltered, unless it just consists of
+  --   whitespace.  When it's all whitespace, @"rexView"@ is used.
+  rexPreprocessExp :: String -> String,
+  -- | Preprocess the string used in pattern antiquotes. 'defaultRexConf'
+  --   adds parenthesis around the string, so that view patterns will parse
+  --   without requiring parenthesis around them.
+  rexPreprocessPat :: String -> String,
+  -- | When a pattern match doesn't have a view pattern, this expression is
+  --   used to preprocess it before matching.  When 'defaultRexConf' is used,
+  --   perhaps via 'rex' or 'brex', a reference to @rexView@ is used.
+  --
+  --   The 'rexView' exported by this module is 'id', so by default no
+  --   preprocessing is done before
+  rexViewExp :: Exp,
+  -- | Options used when compiling PCRE regular expressions.
+  rexPCREOpts :: [PCRE.PCREOption],
+  -- | Options used when executing PCRE regular expressions.
+  rexPCREExecOpts :: [PCRE.PCREExecOption]
   }
 
--- | Default regular expression quasiquoter for 'String's and 'ByteString's,
--- respectively.
-rex, brex :: QuasiQuoter
-rex  = rexWithConf $ defaultRexConf
-brex = rexWithConf $ defaultRexConf { rexByteString = True }
+-- | Default rex configuration, which specifies that the regexes operate on
+--   strings, don't post-process the matched patterns, and use 'PCRE.extended'.
+--   This setting causes whitespace to be non-semantic, and ignores # comments.
+defaultRexConf :: RexConf
+defaultRexConf = RexConf
+  { rexByteString = False
+  , rexCompiled = True
+  , rexPreprocessExp = \s -> if all isSpace s then "rexView" else s
+  , rexPreprocessPat = \s -> "(" ++ s ++ ")"
+  , rexViewExp = VarE (mkName "rexView")
+  , rexPCREOpts = [PCRE.extended]
+  , rexPCREExecOpts = []
+  }
+
+-- | Rex quasiquoter which takes 'String' as input, and uses 'defaultRexConf'
+--   for its configuration.  Can be used in expressions and patterns.
+rex :: QuasiQuoter
+rex  = rexWithConf defaultRexConf
+
+-- | Rex quasiquoter which takes 'ByteString' as input, and otherwise uses
+--  'defaultRexConf' for its configuration.  Can be used in expressions and
+--  patterns.
+brex :: QuasiQuoter
+brex = rexWithConf defaultRexConf { rexByteString = True }
 
 -- | This is a 'QuasiQuoter' transformer, which allows for a whitespace-
 --   sensitive quasi-quoter to be broken over multiple lines.  The default 'rex'
@@ -186,12 +248,6 @@ makeQuasiMultiline (QuasiQuoter a b c d) =
     QuasiQuoter (a . pre) (b . pre) (c . pre) (d . pre)
   where
     pre = concat . (\(x:xs) -> x : map (dropWhile isSpace) xs) . lines
-
--- | Default rex configuration, which specifies that the regexes operate on
---   strings, don't postprocess the matched patterns, and use 'PCRE.extended'.
---   This setting causes whitespace to be nonsemantic, and ignores # comments.
-defaultRexConf :: RexConf
-defaultRexConf = RexConf False False "id" [PCRE.extended] []
 
 -- | A configureable regular-expression QuasiQuoter.  Takes the options to pass
 --   to the PCRE engine, along with 'Bool's to flag 'ByteString' usage and
@@ -213,8 +269,11 @@ rexWithConf conf =
 -- default for captures which lack a parser definition, and defaulting to making
 -- the parser that doesn't exist
 makeExp :: RexConf -> ParseChunks -> ExpQ
-makeExp conf (cnt, pat, exs) = buildExp conf cnt pat $
-  map (fmap $ forceEitherMsg "makeExp" . parseExp conf) exs
+makeExp conf (cnt, pat, exs) =
+  buildExp conf cnt pat $ flip map exs $ fmap $
+    fromParseOk "While parsing expression antiquote"
+    . parseExp
+    . rexPreprocessExp conf
 
 -- Creates the template haskell Pat which corresponds to the parsed interpolated
 -- regex. As well as handling the aforementioned defaulting considerations, this
@@ -233,9 +292,9 @@ makePat conf (cnt, pat, exs) = do
   views = map (fmap processView) exs
 
   processView :: String -> (Exp, Pat)
-  processView xs = case processPat ("("++xs++")") of
+  processView xs = case parsePat (rexPreprocessPat conf xs) of
     ParseOk (ParensP (ViewP e p)) -> (e,p)
-    ParseOk p -> (forceEitherMsg "impossible" (parseExp conf ""), p)
+    ParseOk p -> (rexViewExp conf, p)
     ParseFailed _ b -> error b
 
 -- Here's where the main meat of the template haskell is generated.  Given the
@@ -249,14 +308,12 @@ buildExp RexConf{..} cnt pat xs =
   where
     liftRS x = [| read shown |] where shown = show x
 
-    --TODO: make sure this takes advantage of bytestring fusion stuff - is
-    -- the right pack / unpack. Or use XOverloadedStrings
     get_regex
       | rexCompiled = [| unsafePerformIO (regexFromTable $! $(table_bytes)) |]
       | otherwise = [| PCRE.compile (pack pat) $(liftRS pcreOpts) |]
     table_bytes = [| pack $(LitE . StringL . unpack <$> runIO table_string) |]
     table_string =
-      forceMaybeMsg "Error while getting PCRE compiled representation\n" <$>
+      fromJust' "Error while getting PCRE compiled representation\n" <$>
       precompile (pack pat) pcreOpts
     pcreOpts = rexPCREOpts
 
@@ -273,19 +330,26 @@ buildExp RexConf{..} cnt pat xs =
          . zip xs $ map VarE vs
     vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
 
--- Parse a Haskell expression into a template Haskell Exp
-parseExp :: RexConf -> String -> ParseResult Exp
-parseExp conf xs
-  = fmap toExp
-  . parseExpWithMode rexParseMode
-  $ onSpace xs (rexView conf) id
+-- | Converts @Left@ to @'ParseFailed' 'noLoc'@, and a @Right@ to @'ParseOk'@.
+eitherToParseResult :: Either String a -> ParseResult a
+eitherToParseResult (Left err) = ParseFailed noLoc err
+eitherToParseResult (Right x) = ParseOk x
 
--- probably the quasiquote should have access to the pragmas in the current
--- file, but for now just enable some common extensions that do not steal
--- much syntax
+-- | Parse a Haskell expression into a Template Haskell Exp.
+parseExp :: String -> ParseResult Exp
+parseExp = fmap toExp . parseExpWithMode rexParseMode
+
+-- | Parse a Haskell pattern match into a Template Haskell Pat.
+parsePat :: String -> ParseResult Pat
+parsePat = fmap toPat . parsePatWithMode rexParseMode
+
+-- | Parse mode used by 'parseExp' and 'parsePat'.
 rexParseMode :: ParseMode
 rexParseMode = defaultParseMode { extensions = map EnableExtension exts }
   where
+    -- probably the quasiquote should have access to the pragmas in the current
+    -- file, but for now just enable some common extensions that do not steal
+    -- much syntax
     exts =
       [ ViewPatterns
       , ImplicitParams
@@ -296,11 +360,6 @@ rexParseMode = defaultParseMode { extensions = map EnableExtension exts }
       , TypeFamilies
       , TypeOperators
       ]
-
--- Parse a Haskell pattern match into a template Haskell Pat, yielding Nothing
--- for patterns which consist of just whitespace.
-processPat :: String -> ParseResult Pat
-processPat xs = fmap toPat $ parsePatWithMode rexParseMode xs
 
 -- Parsing
 --------------------------------------------------------------------------------
@@ -318,8 +377,6 @@ parseRex xs = (cnt, concat chunks, quotes)
 
 -- A pair of mutually-recursive functions, one for processing the quotation
 -- and the other for the anti-quotation.
-
--- TODO: add check for erroneous { }
 
 parseRegex :: String -> String -> Int -> (Int, [ParseChunk])
 parseRegex inp s ix = case inp of
@@ -366,10 +423,6 @@ parseAntiquote inp s ix = case inp of
 maybeRead :: (Read a) => String -> Maybe a
 maybeRead = fmap fst . listToMaybe . reads
 
-onSpace :: String -> a -> (String -> a) -> a
-onSpace s x f | all isSpace s = x
-              | otherwise = f s
-
 -- | Given a desired list-length, if the passed list is too short, it is padded
 -- with the given element.  Otherwise, it trims.
 padRight :: a -> Int -> [a] -> [a]
@@ -377,18 +430,16 @@ padRight _ 0 _ = []
 padRight v i [] = replicate i v
 padRight v i (x:xs) = x : padRight v (i-1) xs
 
+rexView :: a -> a
+rexView = id
+
 mapSnd :: (t -> t2) -> (t1, t) -> (t1, t2)
 mapSnd f (x, y) = (x, f y)
 
--- From MissingH
+fromJust' :: String -> Maybe a -> a
+fromJust' msg Nothing = error msg
+fromJust' _ (Just x) = x
 
-{- | Like 'forceMaybe', but lets you customize the error message raised if
-Nothing is supplied. -}
-forceMaybeMsg :: String -> Maybe a -> a
-forceMaybeMsg msg Nothing = error msg
-forceMaybeMsg _ (Just x) = x
-
-{- | Like 'forceEither', but can raise a specific message with the error. -}
-forceEitherMsg :: String -> ParseResult a -> a
-forceEitherMsg msg (ParseFailed x _) = error $ msg ++ ": " ++ show x
-forceEitherMsg _ (ParseOk x) = x
+fromParseOk :: Show a => String -> ParseResult a -> a
+fromParseOk _ (ParseOk x) = x
+fromParseOk msg err = error $ msg ++ ": " ++ show err
