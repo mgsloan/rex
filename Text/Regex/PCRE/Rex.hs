@@ -30,10 +30,10 @@
 -- precompilation, use 'ByteString's, or set a default mapping expression.
 --
 -- Inspired by Matt Morrow's regexqq package:
--- <http://hackage.haskell.org/packages/archive/regexqq/latest/doc/html/src/Text-Regex-PCRE-QQ.html>
+-- <http://hackage.haskell.org/package/regexqq/docs/Text-Regex-PCRE-QQ.html>.
 --
--- And code from Erik Charlebois's interpolatedstring-qq package:
--- <http://hackage.haskell.org/packages/archive/interpolatedstring-qq/latest/doc/html/Text-InterpolatedString-QQ.html>
+-- And some code from Erik Charlebois's interpolatedstring-qq package:
+-- <http://hackage.haskell.org/package/interpolatedstring-qq/>.
 --
 -----------------------------------------------------------------------------
 
