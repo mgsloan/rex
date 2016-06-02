@@ -172,10 +172,8 @@ import Data.Maybe            ( catMaybes, fromJust, isJust )
 import Data.Char             ( isSpace )
 import System.IO.Unsafe      ( unsafePerformIO )
 
-import Language.Haskell.TH hiding (TypeOperators, TupleSections,
-                                   ScopedTypeVariables, TypeFamilies,
-                                   RecordPuns, ImplicitParams,
-                                   RecordWildCards, ViewPatterns)
+import Language.Haskell.TH (Exp(..), ExpQ, Pat(..), PatQ, Lit(..),
+                            mkName, runIO)
 import Language.Haskell.TH.Quote
 import Language.Haskell.Meta (toExp,toPat)
 import Language.Haskell.Exts.Extension (Extension(..), KnownExtension(..))
