@@ -7,5 +7,6 @@ ghc:
   - 8.0
 install:
   - cabal install happy-1.19.5
+  - cabal install --only-dependencies --enable-tests
 script:
   - cabal configure && cabal build
