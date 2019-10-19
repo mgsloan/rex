@@ -168,7 +168,7 @@ import Control.Applicative   ( (<$>) )
 import Control.Arrow         ( first )
 import Data.ByteString.Char8 ( pack, unpack, empty )
 import Data.Either           ( partitionEithers )
-import Data.Maybe            ( catMaybes, fromJust, isJust )
+import Data.Maybe            ( catMaybes )
 import Data.Char             ( isSpace )
 import System.IO.Unsafe      ( unsafePerformIO )
 
@@ -248,7 +248,9 @@ makeQuasiMultiline :: QuasiQuoter -> QuasiQuoter
 makeQuasiMultiline (QuasiQuoter a b c d) =
     QuasiQuoter (a . pre) (b . pre) (c . pre) (d . pre)
   where
-    pre = concat . (\(x:xs) -> x : map (dropWhile isSpace) xs) . lines
+    pre = removeLineSpaces . lines
+    removeLineSpaces [] = []
+    removeLineSpaces (x:xs) = x ++ concatMap (dropWhile isSpace) xs
 
 -- | A configureable regular-expression QuasiQuoter.  Takes the options to pass
 --   to the PCRE engine, along with 'Bool's to flag 'ByteString' usage and
@@ -324,11 +326,10 @@ buildExp RexConf{..} cnt pat xs =
       (_, True)  -> [| fmap ($(return maps) . padRight empty pad) |]
     pad = cnt + 2
     maps = LamE [ListP . (WildP:) $ map VarP vs]
-         . TupE . map (uncurry AppE)
+         . TupE
          -- filter out all "Nothing" exprs
-         . map (first fromJust) . filter (isJust . fst)
          -- [(Expr, Variable applied to)]
-         . zip xs $ map VarE vs
+         $ [AppE x (VarE v) | (Just x, v) <- zip xs vs]
     vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
 
 -- | Converts @Left@ to @'ParseFailed' 'noLoc'@, and a @Right@ to @'ParseOk'@.
