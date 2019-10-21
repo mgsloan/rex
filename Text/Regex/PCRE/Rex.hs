@@ -157,7 +157,7 @@ module Text.Regex.PCRE.Rex
   , parsePat
   , rexParseMode
 -- * Used by the generated code
-  , padRight, rexView
+  , unconsStr, unconsByte, rexView
   ) where
 
 import Text.Regex.PCRE.Precompile
@@ -166,14 +166,14 @@ import qualified Text.Regex.PCRE.Light as PCRE
 
 import Control.Applicative   ( (<$>) )
 import Control.Arrow         ( first )
-import Data.ByteString.Char8 ( pack, unpack, empty )
+import Data.ByteString.Char8 ( ByteString, pack, unpack, empty )
 import Data.Either           ( partitionEithers )
 import Data.Maybe            ( catMaybes )
 import Data.Char             ( isSpace )
 import System.IO.Unsafe      ( unsafePerformIO )
 
-import Language.Haskell.TH (Exp(..), ExpQ, Pat(..), PatQ, Lit(..),
-                            mkName, runIO)
+import Language.Haskell.TH (Body(..), Dec(..), Exp(..), ExpQ, Pat(..), PatQ, Lit(..),
+                            mkName, newName, runIO)
 import Language.Haskell.TH.Quote
 import Language.Haskell.Meta (toExp,toPat)
 import Language.Haskell.Exts.Extension (Extension(..), KnownExtension(..))
@@ -322,14 +322,27 @@ buildExp RexConf{..} cnt pat xs =
 
     process = case (null vs, rexByteString) of
       (True, _)  -> [| fmap ( const () ) |]
-      (_, False) -> [| fmap ($(return maps) . padRight "" pad . map unpack) |]
-      (_, True)  -> [| fmap ($(return maps) . padRight empty pad) |]
-    pad = cnt + 2
-    maps = LamE [ListP . (WildP:) $ map VarP vs]
+      (_, False) -> [| fmap ($(maps 'unconsStr)) |]
+      (_, True)  -> [| fmap ($(maps 'unconsByte)) |]
+    maps def = do
+      vsName <- newName "vs"
+      lets <- makeLets vsName . (WildP:) $ map VarP vs
+      return $ LamE [VarP vsName] . LetE lets
          . TupE
          -- filter out all "Nothing" exprs
          -- [(Expr, Variable applied to)]
          $ [AppE x (VarE v) | (Just x, v) <- zip xs vs]
+      where
+        makeLets _ [] = return []
+        makeLets vsName (y:ys)
+          | null ys = return [makeLet WildP] -- special case so we don't create a variable we don't use
+          | otherwise = do
+            innerVsName <- newName "vs"
+            let yLet = makeLet (VarP innerVsName)
+            yLets <- makeLets innerVsName ys
+            return $ yLet:yLets
+          where
+            makeLet innerVs = ValD (TupP [y,innerVs]) (NormalB (AppE (VarE def) (VarE vsName))) []
     vs = [mkName $ "v" ++ show i | i <- [0..cnt]]
 
 -- | Converts @Left@ to @'ParseFailed' 'noLoc'@, and a @Right@ to @'ParseOk'@.
@@ -420,12 +433,13 @@ parseAntiquote inp s ix = case inp of
 -- Utils
 --------------------------------------------------------------------------------
 
--- | Given a desired list-length, if the passed list is too short, it is padded
--- with the given element.  Otherwise, it trims.
-padRight :: a -> Int -> [a] -> [a]
-padRight _ 0 _ = []
-padRight v i [] = replicate i v
-padRight v i (x:xs) = x : padRight v (i-1) xs
+unconsStr :: [ByteString] -> (String,[ByteString])
+unconsStr [] = ("",[])
+unconsStr (x:xs) = (unpack x,xs)
+
+unconsByte :: [ByteString] -> (ByteString,[ByteString])
+unconsByte [] = (empty,[])
+unconsByte (x:xs) = (x,xs)
 
 -- | A default view function used when expression antiquotes are empty, or when
 --   pattern antiquotes omit a view pattern.  See the documentation for
