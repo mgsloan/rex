@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6
+
+  * Made the generated code total. See [#10][]
+
+[#10]: https://github.com/mgsloan/rex/issues/10
+
 ## 0.5.1 (2014-02-20)
 
   * Made the type of the default 'rexView' fully polymorphic.
