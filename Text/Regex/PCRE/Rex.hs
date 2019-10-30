@@ -157,7 +157,7 @@ module Text.Regex.PCRE.Rex
   , parsePat
   , rexParseMode
 -- * Used by the generated code
-  , unconsStr, unconsByte, rexView
+  , rexView
   ) where
 
 import Text.Regex.PCRE.Precompile
