@@ -19,8 +19,8 @@ Category:            Control
 Build-type:          Simple
 Stability:           experimental
 Extra-source-files:  Demo.hs, Bench.hs
-Data-files:          README.md
-                     CHANGES.md
+Data-files:          readme.md
+                     changelog.md
 Cabal-version:       >=1.6
 Bug-Reports:         http://github.com/mgsloan/rex/issues
 Source-Repository head
