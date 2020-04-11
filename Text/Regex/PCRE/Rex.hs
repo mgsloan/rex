@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TupleSections #-}
@@ -331,6 +332,9 @@ buildExp RexConf{..} cnt pat xs =
          . TupE
          -- filter out all "Nothing" exprs
          -- [(Expr, Variable applied to)]
+#if MIN_VERSION_template_haskell(2,16,0)
+         . map Just
+#endif
          $ [AppE x (VarE v) | (Just x, v) <- zip xs vs]
       where
         makeLets _ [] = return []
