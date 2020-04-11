@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+  * Now compiles with GHC-8.10. See [#13][]
+
+[#13]: https://github.com/mgsloan/rex/issues/13
+
 ## 0.6
 
   * Made the generated code total. See [#10][]
