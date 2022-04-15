@@ -21,20 +21,20 @@ Stability:           experimental
 Extra-source-files:  Demo.hs, Bench.hs
 Data-files:          readme.md
                      changelog.md
-Cabal-version:       >=1.6
+Cabal-version:       >=1.10
 Bug-Reports:         http://github.com/mgsloan/rex/issues
 Source-Repository head
   Type: git
   Location: git://github.com/mgsloan/rex
 
 Library
-  Extensions:        TemplateHaskell, QuasiQuotes, TupleSections, ViewPatterns
-  Exposed-modules:   Text.Regex.PCRE.Rex, Text.Regex.PCRE.Precompile
-  Build-depends:     base >= 3.0 && < 6,
-                     bytestring,
-                     containers,
-                     haskell-src-exts >= 1.14,
-                     haskell-src-meta >= 0.5,
-                     pcre-light,
-                     template-haskell >= 2.5.0.0
-  Ghc-options:       -Wall
+  default-language:   Haskell2010
+  exposed-modules:    Text.Regex.PCRE.Rex, Text.Regex.PCRE.Precompile
+  build-depends:      base >= 3.0 && < 6,
+                      bytestring,
+                      containers,
+                      haskell-src-exts >= 1.14,
+                      haskell-src-meta >= 0.5,
+                      pcre-light,
+                      template-haskell >= 2.5.0.0
+  ghc-options:        -Wall
