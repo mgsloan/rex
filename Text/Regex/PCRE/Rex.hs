@@ -289,7 +289,12 @@ makePat :: RexConf -> ParseChunks -> PatQ
 makePat conf (cnt, pat, exs) = do
   viewExp <- buildExp conf cnt pat $ map (fmap fst) views
   return . ViewP viewExp
-         . (\xs -> ConP 'Just [TupP xs])
+         . (\xs -> ConP 'Just
+#if MIN_VERSION_template_haskell(2,18,0)
+                []
+#endif
+                [TupP xs]
+            )
          . map snd $ catMaybes views
  where
   views :: [Maybe (Exp, Pat)]
