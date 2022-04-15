@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2
+
+  * Now compiles with GHC-9.2. See [#14][]
+
 ## 0.6.1
 
   * Now compiles with GHC-8.10. See [#13][]
